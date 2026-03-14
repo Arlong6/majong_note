@@ -1,4 +1,5 @@
 node_modules/
+*.p8
 ios/App/Pods/
 ios/App/App.xcworkspace/xcuserdata/
 ios/App/build/

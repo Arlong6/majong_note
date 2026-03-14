@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>麻將戰績 — 測試套件</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, monospace; background: #0f172a; color: #e2e8f0; padding: 24px; }
+    h1 { font-size: 20px; font-weight: 900; margin-bottom: 4px; }
+    .subtitle { font-size: 12px; color: #64748b; margin-bottom: 24px; }
+
+    /* Summary bar */
+    #summary-bar { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+    .stat-pill { padding: 8px 16px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .pill-total  { background: #1e293b; color: #94a3b8; }
+    .pill-pass   { background: #14532d; color: #4ade80; }
+    .pill-fail   { background: #450a0a; color: #f87171; }
+    .pill-skip   { background: #292524; color: #a8a29e; }
+
+    /* Sections */
+    .section { margin-bottom: 28px; }
+    .section-title { font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #1e293b; }
+
+    /* Test cards */
+    .test { background: #1e293b; border-radius: 10px; padding: 12px 14px; margin: 6px 0; border-left: 3px solid #334155; display: flex; align-items: flex-start; gap: 10px; }
+    .test.pass { border-left-color: #22c55e; }
+    .test.fail { border-left-color: #ef4444; }
+    .test-icon { font-size: 14px; margin-top: 1px; flex-shrink: 0; }
+    .test-body { flex: 1; }
+    .test-name { font-size: 13px; font-weight: 700; color: #f1f5f9; }
+    .test-detail { font-size: 11px; color: #64748b; margin-top: 4px; white-space: pre-wrap; }
+    .test.fail .test-name { color: #fca5a5; }
+    .test.fail .test-detail { color: #f87171; }
+
+    /* Buttons */
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+    button { padding: 9px 18px; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 700; transition: opacity 0.15s; }
+    button:hover { opacity: 0.85; }
+    .btn-primary  { background: #3b82f6; color: white; }
+    .btn-danger   { background: #ef4444; color: white; }
+    .btn-success  { background: #22c55e; color: white; }
+    .btn-neutral  { background: #334155; color: #e2e8f0; }
+    .btn-warning  { background: #f59e0b; color: #1a1a1a; }
+    .btn-purple   { background: #8b5cf6; color: white; }
+
+    /* Scenario section */
+    .scenario-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 24px; }
+    .scenario-card { background: #1e293b; border-radius: 10px; padding: 14px; border: 1px solid #334155; cursor: pointer; transition: border-color 0.15s; }
+    .scenario-card:hover { border-color: #3b82f6; }
+    .scenario-card h4 { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+    .scenario-card p  { font-size: 11px; color: #64748b; }
+
+    /* Log */
+    #log { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; font-size: 10px; color: #64748b; white-space: pre-wrap; max-height: 160px; overflow-y: auto; margin-top: 20px; }
+  </style>
+</head>
+<body>
+
+<h1>🀄 麻將戰績追蹤器 — 測試套件</h1>
+<p class="subtitle">自動邏輯測試 + UI 情境模擬 | <span id="date"></span></p>
+
+<!-- Action buttons -->
+<div class="btn-row">
+  <button class="btn-primary"  onclick="runAllTests()">▶ 執行所有測試</button>
+  <button class="btn-danger"   onclick="clearStorage()">🗑 清除資料</button>
+  <button class="btn-neutral"  onclick="openApp()">🔗 開啟 App</button>
+  <button class="btn-neutral"  onclick="resetOnboarding()">↩ 重置 Onboarding</button>
+</div>
+
+<!-- Summary -->
+<div id="summary-bar">
+  <span class="stat-pill pill-total" id="pill-total">尚未執行</span>
+</div>
+
+<!-- Test results -->
+<div id="results"></div>
+
+<!-- UI scenario seeds -->
+<div class="section">
+  <div class="section-title">UI 情境模擬 — 點擊後開啟 App 確認畫面表現</div>
+  <div class="scenario-grid" id="scenario-grid"></div>
+</div>
+
+<div id="log"></div>
+
+<script>
+  document.getElementById('date').textContent = new Date().toLocaleString('zh-TW');
+
+  // ─── Test runner ───────────────────────────────────────────────────────────
+  let passed = 0, failed = 0, logs = [];
+
+  function log(msg) {
+    logs.push(msg);
+    document.getElementById('log').textContent = logs.slice(-60).join('\n');
+  }
+
+  function assert(condition, name, detail = '') {
+    const section = currentSection;
+    const div = document.createElement('div');
+    div.className = 'test ' + (condition ? 'pass' : 'fail');
+    div.innerHTML = `
+      <span class="test-icon">${condition ? '✅' : '❌'}</span>
+      <div class="test-body">
+        <div class="test-name">${name}</div>
+        ${detail ? `<div class="test-detail">${detail}</div>` : ''}
+      </div>`;
+    section.appendChild(div);
+    if (condition) passed++; else failed++;
+    log(`[${condition ? 'PASS' : 'FAIL'}] ${name}${detail ? ' → ' + detail.replace(/\n/g,' ') : ''}`);
+  }
+
+  let currentSection = null;
+  function section(title) {
+    const wrap = document.createElement('div');
+    wrap.className = 'section';
+    const h = document.createElement('div');
+    h.className = 'section-title';
+    h.textContent = title;
+    wrap.appendChild(h);
+    document.getElementById('results').appendChild(wrap);
+    currentSection = wrap;
+  }
+
+  // ─── Business logic (mirrors index.html) ──────────────────────────────────
+  function makeRecord(type, amount, daysAgo = 0, opts = {}) {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    return {
+      id: Date.now() + Math.random(),
+      date: d.toISOString(),
+      amount,
+      type,
+      note: opts.note || '',
+      participants: opts.players || [],
+    };
+  }
+
+  function makeRecordOnDate(type, amount, year, month, day, opts = {}) {
+    return {
+      id: Date.now() + Math.random(),
+      date: new Date(year, month, day).toISOString(),
+      amount, type,
+      note: opts.note || '',
+      participants: opts.players || [],
+    };
+  }
+
+  function calcTotal(records) {
+    return records.reduce((s, r) => s + (r.type === 'win' ? r.amount : -r.amount), 0);
+  }
+
+  function calcMonthly(records, year, month) {
+    return records
+      .filter(r => { const d = new Date(r.date); return d.getMonth() === month && d.getFullYear() === year; })
+      .reduce((s, r) => s + (r.type === 'win' ? r.amount : -r.amount), 0);
+  }
+
+  function calcStats(records) {
+    const totalGames = records.length;
+    const wins = records.filter(r => r.type === 'win').length;
+    const losses = totalGames - wins;
+    const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
+    const totalWon  = records.filter(r => r.type === 'win').reduce((s, r) => s + r.amount, 0);
+    const totalLost = records.filter(r => r.type === 'loss').reduce((s, r) => s + r.amount, 0);
+
+    // Streak
+    let streak = 0, streakType = null;
+    const sorted = [...records].sort((a, b) => new Date(b.date) - new Date(a.date));
+    for (const r of sorted) {
+      if (!streakType) { streakType = r.type; streak = 1; }
+      else if (r.type === streakType) streak++;
+      else break;
+    }
+
+    // Player stats
+    const playerMap = {};
+    records.forEach(r => {
+      (r.participants || []).forEach(p => {
+        if (!playerMap[p]) playerMap[p] = { games: 0, wins: 0 };
+        playerMap[p].games++;
+        if (r.type === 'win') playerMap[p].wins++;
+      });
+    });
+    const playerStats = Object.entries(playerMap)
+      .map(([name, d]) => ({ name, ...d }))
+      .sort((a, b) => b.games - a.games);
+
+    return { totalGames, wins, losses, winRate, totalWon, totalLost, streak, streakType, playerStats };
+  }
+
+  function calcCalendarTitle(year, month) {
+    const isCurrentYear = year === new Date().getFullYear();
+    return isCurrentYear ? `${month + 1}月` : `${year} / ${month + 1}`;
+  }
+
+  function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+  function firstDayOfMonth(y, m) { return new Date(y, m, 1).getDay(); }
+
+  function groupByDate(records) {
+    const map = {};
+    records.forEach(r => {
+      const key = new Date(r.date).toDateString();
+      if (!map[key]) map[key] = [];
+      map[key].push(r);
+    });
+    return map;
+  }
+
+  // ─── localStorage helpers ─────────────────────────────────────────────────
+  function saveRecords(records) { localStorage.setItem('mahjong_records', JSON.stringify(records)); }
+  function savePlayers(players) { localStorage.setItem('mahjong_players', JSON.stringify(players)); }
+  function loadRecords() {
+    try { const s = localStorage.getItem('mahjong_records'); return s ? JSON.parse(s) : []; } catch { return []; }
+  }
+  function clearStorage() {
+    localStorage.removeItem('mahjong_records');
+    localStorage.removeItem('mahjong_players');
+    log('✓ localStorage 已清除');
+    alert('資料已清除。');
+  }
+  function resetOnboarding() {
+    localStorage.removeItem('mahjong_onboarded');
+    log('✓ Onboarding 已重置');
+    alert('Onboarding 已重置，下次開啟 App 會再次顯示。');
+  }
+  function openApp() { window.open('index.html', '_blank'); }
+
+  // ─── All tests ────────────────────────────────────────────────────────────
+  function runAllTests() {
+    passed = 0; failed = 0; logs = [];
+    document.getElementById('results').innerHTML = '';
+
+    const now = new Date();
+    const Y = now.getFullYear(), M = now.getMonth();
+
+    // ── 1. 金額計算 ─────────────────────────────────────────────────────────
+    section('一、金額計算');
+
+    const r1 = [
+      makeRecord('win', 500), makeRecord('loss', 200), makeRecord('win', 300),
+      makeRecord('loss', 100), makeRecord('win', 150), makeRecord('loss', 400),
+    ];
+    assert(calcTotal(r1) === 250, '基本損益計算（500-200+300-100+150-400=250）', `實際：${calcTotal(r1)}`);
+    assert(calcTotal([]) === 0, '空陣列總金額為 0');
+    assert(calcTotal([makeRecord('win', 999)]) === 999, '單筆贏錢');
+    assert(calcTotal([makeRecord('loss', 999)]) === -999, '單筆輸錢');
+    assert(calcTotal([makeRecord('win', 500), makeRecord('loss', 500)]) === 0, '相等抵消為 0');
+
+    const bigRecords = Array.from({length: 100}, (_, i) => makeRecord(i % 2 === 0 ? 'win' : 'loss', 100));
+    assert(calcTotal(bigRecords) === 0, '100 筆交替贏輸，總計為 0', `實際：${calcTotal(bigRecords)}`);
+
+    // ── 2. 本月金額計算 ──────────────────────────────────────────────────────
+    section('二、本月金額計算');
+
+    const thisMonth = [makeRecord('win', 1000), makeRecord('loss', 300), makeRecord('win', 200)];
+    const lastMonthRec = makeRecord('win', 9999, 45);
+    const mixed = [...thisMonth, lastMonthRec];
+
+    assert(calcMonthly(thisMonth, Y, M) === 900, '本月 3 筆計算正確', `預期 900，實際 ${calcMonthly(thisMonth, Y, M)}`);
+    assert(calcMonthly(mixed, Y, M) === 900, '混入上月記錄後本月金額不受影響', `預期 900，實際 ${calcMonthly(mixed, Y, M)}`);
+    assert(calcMonthly([], Y, M) === 0, '空陣列本月金額為 0');
+
+    const nextMonth = M === 11 ? 0 : M + 1;
+    const nextYear  = M === 11 ? Y + 1 : Y;
+    assert(calcMonthly(thisMonth, nextYear, nextMonth) === 0, '本月資料不出現在下個月');
+
+    // ── 3. 統計資料計算 ──────────────────────────────────────────────────────
+    section('三、統計資料');
+
+    assert(calcStats([]).totalGames === 0, '空資料場次為 0');
+    assert(calcStats([]).winRate === 0, '空資料勝率為 0');
+
+    const s1 = calcStats([makeRecord('win',100), makeRecord('win',100), makeRecord('loss',100)]);
+    assert(s1.wins === 2, '勝場計算正確', `預期 2，實際 ${s1.wins}`);
+    assert(s1.losses === 1, '敗場計算正確', `預期 1，實際 ${s1.losses}`);
+    assert(s1.winRate === 67, '勝率計算（2/3 ≈ 67%）', `預期 67，實際 ${s1.winRate}`);
+    assert(s1.totalWon === 200, '累計贏得金額', `預期 200，實際 ${s1.totalWon}`);
+    assert(s1.totalLost === 100, '累計輸掉金額', `預期 100，實際 ${s1.totalLost}`);
+
+    // 100% win rate
+    const allWin = calcStats([makeRecord('win',100), makeRecord('win',200)]);
+    assert(allWin.winRate === 100, '全勝勝率為 100%');
+    assert(allWin.losses === 0, '全勝無敗場');
+
+    // 0% win rate
+    const allLoss = calcStats([makeRecord('loss',100), makeRecord('loss',200)]);
+    assert(allLoss.winRate === 0, '全敗勝率為 0%');
+    assert(allLoss.wins === 0, '全敗無勝場');
+
+    // ── 4. 連勝連敗計算 ──────────────────────────────────────────────────────
+    section('四、連勝 / 連敗');
+
+    // 最新的要排前面（依 date 排序），所以先放的是較新的
+    const streak3Win = [
+      makeRecord('win', 100, 0),  // 今天（最新）
+      makeRecord('win', 100, 1),  // 昨天
+      makeRecord('win', 100, 2),  // 前天
+      makeRecord('loss', 100, 3), // 3天前（中斷）
+    ];
+    const s3 = calcStats(streak3Win);
+    assert(s3.streak === 3, '連勝 3 場計算正確', `實際 streak=${s3.streak}, type=${s3.streakType}`);
+    assert(s3.streakType === 'win', '連勝 type 為 win');
+
+    const streak2Loss = [
+      makeRecord('loss', 100, 0),
+      makeRecord('loss', 100, 1),
+      makeRecord('win', 100, 2),
+    ];
+    const s4 = calcStats(streak2Loss);
+    assert(s4.streak === 2, '連敗 2 場計算正確', `streak=${s4.streak}`);
+    assert(s4.streakType === 'loss', '連敗 type 為 loss');
+
+    const s5 = calcStats([makeRecord('win', 100)]);
+    assert(s5.streak === 1, '單筆記錄 streak=1');
+
+    const altRecords = [
+      makeRecord('win', 100, 0),
+      makeRecord('loss', 100, 1),
+      makeRecord('win', 100, 2),
+    ];
+    assert(calcStats(altRecords).streak === 1, '交替勝敗 streak=1（最新單場）');
+
+    // ── 5. 牌友統計 ──────────────────────────────────────────────────────────
+    section('五、牌友同場統計');
+
+    const players = ['阿明', '小華', '大強'];
+    const precs = [
+      makeRecord('win',  100, 0, { players: ['阿明', '小華'] }),
+      makeRecord('win',  200, 1, { players: ['阿明'] }),
+      makeRecord('loss', 100, 2, { players: ['阿明', '大強'] }),
+      makeRecord('win',  150, 3, { players: ['小華', '大強'] }),
+    ];
+    const ps = calcStats(precs).playerStats;
+    const ming = ps.find(p => p.name === '阿明');
+    const hua  = ps.find(p => p.name === '小華');
+    const qiang = ps.find(p => p.name === '大強');
+
+    assert(ming && ming.games === 3, '阿明出場 3 次', `實際：${ming?.games}`);
+    assert(ming && ming.wins === 2, '阿明勝場 2 次', `實際：${ming?.wins}`);
+    assert(hua  && hua.games  === 2, '小華出場 2 次', `實際：${hua?.games}`);
+    assert(qiang && qiang.games === 2, '大強出場 2 次', `實際：${qiang?.games}`);
+    assert(ps[0].games >= ps[ps.length-1].games, '牌友清單依出場次數排序');
+
+    // 無牌友標記的記錄不影響統計
+    const noPlayerRec = makeRecord('win', 100, 0);
+    const psEmpty = calcStats([noPlayerRec]).playerStats;
+    assert(psEmpty.length === 0, '無牌友標記時統計為空');
+
+    // ── 6. 日曆邏輯 ──────────────────────────────────────────────────────────
+    section('六、日曆邏輯');
+
+    assert(daysInMonth(2024, 1) === 29, '2024 年 2 月（閏年）= 29 天');
+    assert(daysInMonth(2023, 1) === 28, '2023 年 2 月（非閏年）= 28 天');
+    assert(daysInMonth(2024, 0) === 31, '1 月 = 31 天');
+    assert(daysInMonth(2024, 3) === 30, '4 月 = 30 天');
+    assert(daysInMonth(2024, 11) === 31, '12 月 = 31 天');
+
+    // firstDayOfMonth 應在 0-6 之間
+    for (let m = 0; m < 12; m++) {
+      const fd = firstDayOfMonth(2024, m);
+      assert(fd >= 0 && fd <= 6, `2024/${m+1} 第一天是星期幾（應 0-6）`, `實際：${fd}`);
+    }
+
+    // 年份顯示
+    assert(calcCalendarTitle(Y, M) === `${M + 1}月`, '當年只顯示月份', `實際：${calcCalendarTitle(Y, M)}`);
+    assert(calcCalendarTitle(Y - 1, 0) === `${Y-1} / 1`, '往年顯示年份', `實際：${calcCalendarTitle(Y-1, 0)}`);
+    assert(calcCalendarTitle(Y + 1, 5) === `${Y+1} / 6`, '未來年份也顯示年份');
+
+    // ── 7. 日期分組（同一天多筆）───────────────────────────────────────────
+    section('七、同一天多筆記錄');
+
+    const sameDay = [
+      makeRecord('win',  100, 0),
+      makeRecord('loss', 200, 0),
+      makeRecord('win',  50,  0),
+    ];
+    const grouped = groupByDate(sameDay);
+    const todayKey = new Date().toDateString();
+    assert(grouped[todayKey]?.length === 3, '同一天 3 筆紀錄正確分組', `實際：${grouped[todayKey]?.length}`);
+    assert(calcTotal(grouped[todayKey]) === -50, '同一天損益計算正確（100-200+50=-50）', `實際：${calcTotal(grouped[todayKey])}`);
+
+    const multiDay = [
+      makeRecord('win', 100, 0), makeRecord('win', 100, 0), // 今天 2筆
+      makeRecord('loss', 100, 1),                           // 昨天 1筆
+    ];
+    const mg = groupByDate(multiDay);
+    assert(Object.keys(mg).length === 2, '兩天的記錄分為 2 組', `實際：${Object.keys(mg).length}`);
+
+    // ── 8. localStorage 持久化 ────────────────────────────────────────────
+    section('八、localStorage 持久化');
+
+    const testRecs = Array.from({length: 15}, (_, i) => makeRecord(i % 2 === 0 ? 'win' : 'loss', (i+1)*100, i));
+    saveRecords(testRecs);
+    const loaded = loadRecords();
+    assert(loaded.length === 15, '存 15 筆、讀回 15 筆', `讀回：${loaded.length}`);
+    assert(calcTotal(loaded) === calcTotal(testRecs), '讀回後金額計算一致',
+      `存入計算：${calcTotal(testRecs)}，讀回計算：${calcTotal(loaded)}`);
+
+    // 損壞資料 fallback
+    localStorage.setItem('mahjong_records', 'NOT_VALID_JSON{{{');
+    const fallback = loadRecords();
+    assert(Array.isArray(fallback) && fallback.length === 0, '損壞的 JSON 不崩潰，fallback 為空陣列');
+
+    // 恢復
+    saveRecords(testRecs);
+
+    // ── 9. 邊界 & 極端值 ────────────────────────────────────────────────────
+    section('九、邊界值與極端情況');
+
+    assert(calcTotal([makeRecord('win', 0)]) === 0, '金額為 0 不影響總計');
+    assert(calcTotal([makeRecord('win', 999999)]) === 999999, '大金額計算正確');
+    assert(calcTotal([makeRecord('win', 1), makeRecord('loss', 1)]) === 0, '1 元抵消');
+
+    // 極多筆
+    const manyRecs = Array.from({length: 500}, (_, i) => makeRecord('win', 1, i % 365));
+    assert(calcTotal(manyRecs) === 500, '500 筆全贏，每筆 1 元，總計 500');
+    assert(calcStats(manyRecs).winRate === 100, '500 筆全贏勝率 100%');
+
+    // 同月跨年
+    const y2023_jan = makeRecordOnDate('win', 1000, 2023, 0, 15);
+    const y2024_jan = makeRecordOnDate('win', 2000, 2024, 0, 15);
+    assert(calcMonthly([y2023_jan, y2024_jan], 2024, 0) === 2000, '2024/1 與 2023/1 正確區分', `實際：${calcMonthly([y2023_jan, y2024_jan], 2024, 0)}`);
+    assert(calcMonthly([y2023_jan, y2024_jan], 2023, 0) === 1000, '2023/1 也可正確取回');
+
+    // ── 顯示 summary ─────────────────────────────────────────────────────
+    const total = passed + failed;
+    const bar = document.getElementById('summary-bar');
+    bar.innerHTML = `
+      <span class="stat-pill pill-total">共 ${total} 項</span>
+      <span class="stat-pill pill-pass">✅ 通過 ${passed}</span>
+      ${failed > 0 ? `<span class="stat-pill pill-fail">❌ 失敗 ${failed}</span>` : ''}
+      ${failed === 0 ? '<span class="stat-pill" style="background:#14532d;color:#4ade80">🎉 全數通過！</span>' : ''}
+    `;
+    log(`\n========= 測試完成：${passed}/${total} 通過 =========`);
+  }
+
+  // ─── UI Scenario Seeds ─────────────────────────────────────────────────────
+  const SCENARIOS = [
+    {
+      title: '🆕 全新空白狀態',
+      desc: '清除所有資料，確認空白提示與 onboarding',
+      action() {
+        clearStorage();
+        localStorage.removeItem('mahjong_onboarded');
+      },
+    },
+    {
+      title: '✅ 只有 1 筆（今天贏）',
+      desc: '最小資料，確認標題顯示、日曆圓點、總金額',
+      action() {
+        saveRecords([makeRecord('win', 500, 0, { note: '開胡' })]);
+        savePlayers(['阿明', '小華']);
+      },
+    },
+    {
+      title: '📅 同天多筆（今天 3 筆）',
+      desc: '確認日曆數字顯示、Day Detail Sheet 開啟',
+      action() {
+        saveRecords([
+          makeRecord('win',  300, 0, { note: '上午場', players: ['阿明'] }),
+          makeRecord('loss', 150, 0, { note: '下午場', players: ['小華'] }),
+          makeRecord('win',  200, 0, { note: '晚場'  }),
+        ]);
+        savePlayers(['阿明', '小華', '大強']);
+      },
+    },
+    {
+      title: '🔥 連勝 5 場',
+      desc: '確認統計頁的連勝 Banner 顯示',
+      action() {
+        const recs = Array.from({length: 5}, (_, i) => makeRecord('win', 200 + i*50, i, { players: ['阿明','小華'] }));
+        saveRecords(recs);
+        savePlayers(['阿明', '小華', '大強']);
+      },
+    },
+    {
+      title: '🌊 連敗 4 場',
+      desc: '確認統計頁連敗 Banner、背景顯示灰色',
+      action() {
+        const recs = Array.from({length: 4}, (_, i) => makeRecord('loss', 300, i));
+        saveRecords(recs);
+      },
+    },
+    {
+      title: '📊 大量資料（30 筆）',
+      desc: '測試列表捲動、統計圖表、效能',
+      action() {
+        const recs = Array.from({length: 30}, (_, i) => makeRecord(
+          i % 3 === 0 ? 'loss' : 'win',
+          Math.floor(Math.random() * 900) + 100,
+          i,
+          { players: i % 2 === 0 ? ['阿明'] : ['小華', '大強'], note: `第${i+1}局` }
+        ));
+        saveRecords(recs);
+        savePlayers(['阿明', '小華', '大強', '林小姐']);
+      },
+    },
+    {
+      title: '📆 跨 6 個月資料',
+      desc: '確認統計頁近 6 個月長條圖顯示',
+      action() {
+        const recs = [];
+        for (let i = 0; i < 6; i++) {
+          const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+          const wins  = Math.floor(Math.random() * 3) + 1;
+          const losses = Math.floor(Math.random() * 2);
+          for (let j = 0; j < wins;   j++) recs.push(makeRecordOnDate('win',  (j+1)*100, d.getFullYear(), d.getMonth(), j+1));
+          for (let j = 0; j < losses; j++) recs.push(makeRecordOnDate('loss', (j+1)*150, d.getFullYear(), d.getMonth(), j+5));
+        }
+        saveRecords(recs);
+        savePlayers(['阿明', '小華', '大強']);
+      },
+    },
+    {
+      title: '💯 全勝紀錄',
+      desc: '確認紅色主題、勝率 100%、正面標語',
+      action() {
+        saveRecords(Array.from({length: 8}, (_, i) => makeRecord('win', 300 + i*50, i)));
+      },
+    },
+    {
+      title: '💀 全敗紀錄',
+      desc: '確認灰色主題、勝率 0%、韜光養晦標語',
+      action() {
+        saveRecords(Array.from({length: 6}, (_, i) => makeRecord('loss', 200 + i*100, i)));
+      },
+    },
+    {
+      title: '👥 豐富牌友資料',
+      desc: '確認統計頁牌友同場統計排列',
+      action() {
+        const pl = ['阿明', '小華', '大強', '林小姐', '老王'];
+        const recs = Array.from({length: 20}, (_, i) => {
+          const sample = pl.filter(() => Math.random() > 0.5).slice(0, 3);
+          return makeRecord(i % 3 !== 0 ? 'win' : 'loss', 100 + i*20, i, { players: sample });
+        });
+        saveRecords(recs);
+        savePlayers(pl);
+      },
+    },
+    {
+      title: '📅 往年記錄',
+      desc: '確認日曆標題顯示年份（如「2023 / 3」）',
+      action() {
+        const recs = [
+          makeRecordOnDate('win',  500, 2023, 2, 15, { note: '兩年前' }),
+          makeRecordOnDate('loss', 300, 2023, 5, 10),
+          makeRecordOnDate('win',  800, 2024, 0, 3),
+          makeRecord('win', 200, 0),
+        ];
+        saveRecords(recs);
+      },
+    },
+    {
+      title: '💰 大金額測試',
+      desc: '確認數字顯示不截斷（千分位格式）',
+      action() {
+        saveRecords([
+          makeRecord('win',  12500, 0, { note: '大贏' }),
+          makeRecord('loss', 8800,  1, { note: '大輸' }),
+          makeRecord('win',  50000, 2, { note: '超大場' }),
+        ]);
+      },
+    },
+  ];
+
+  function buildScenarios() {
+    const grid = document.getElementById('scenario-grid');
+    SCENARIOS.forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'scenario-card';
+      card.innerHTML = `<h4>${s.title}</h4><p>${s.desc}</p>`;
+      card.onclick = () => {
+        s.action();
+        log(`✓ 已載入情境：${s.title}`);
+        window.open('index.html', '_blank');
+      };
+      grid.appendChild(card);
+    });
+  }
+
+  buildScenarios();
+</script>
+</body>
+</html>

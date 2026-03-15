@@ -10,5 +10,7 @@
     <false/>
     <key>uploadSymbols</key>
     <true/>
+    <key>uploadPackage</key>
+    <true/>
 </dict>
 </plist>

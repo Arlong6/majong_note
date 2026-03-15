@@ -71,13 +71,8 @@ jobs:
             -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
             -allowProvisioningUpdates
 
-      - name: Upload to App Store Connect
-        run: |
-          xcrun altool --upload-app \
-            --type ios \
-            --file $RUNNER_TEMP/export/App.ipa \
-            --apiKey ${{ secrets.ASC_KEY_ID }} \
-            --apiIssuer ${{ secrets.ASC_ISSUER_ID }}
+      # Upload is handled automatically by Export IPA step above
+      # (ExportOptions.plist has uploadPackage=true + method=app-store-connect)
 
       - name: Cleanup
         if: always()

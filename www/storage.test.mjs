@@ -99,3 +99,31 @@ test('不變量：遷移失敗後三處不同時全空（至少 legacy 有）', 
   const memHas = d.records.length > 0;
   assert.ok(legacyHas && memHas);   // 記憶體有值 + 來源仍在 → 未全空
 });
+
+test('save 寫進 Preferences', async () => {
+  const a = makeAdapter();
+  await createStorage(a).save({ records: R, players: ['A'], onboarded: true });
+  assert.equal(await a.prefGet(K.rec), JSON.stringify(R));
+  assert.equal(await a.prefGet(K.onb), 'true');
+});
+
+test('writeBackup 產生 latest + 當日快照', async () => {
+  const a = makeAdapter({ today: '2026-07-07' });
+  await createStorage(a).writeBackup({ records: R, players: ['A'] });
+  assert.equal(a._files.has('backup_latest.json'), true);
+  assert.equal(a._files.has('backup_2026-07-07.json'), true);
+  const snap = JSON.parse(a._files.get('backup_2026-07-07.json'));
+  assert.deepEqual(snap.records, R);
+});
+
+test('每日快照只保留最近 7 份', async () => {
+  const files = {};
+  for (const d of ['2026-06-28','2026-06-29','2026-06-30','2026-07-01','2026-07-02','2026-07-03','2026-07-04','2026-07-05'])
+    files['backup_' + d + '.json'] = '{}';
+  const a = makeAdapter({ today: '2026-07-07', files });
+  await createStorage(a).writeBackup({ records: R, players: [] });
+  const snaps = [...a._files.keys()].filter(n => /^backup_\d{4}-\d{2}-\d{2}\.json$/.test(n)).sort();
+  assert.equal(snaps.length, 7);                      // 8 舊 + 今日 = 9 → 砍到 7
+  assert.equal(snaps.includes('backup_2026-06-28.json'), false); // 最舊被砍
+  assert.equal(snaps.includes('backup_2026-07-07.json'), true);  // 今日在
+});

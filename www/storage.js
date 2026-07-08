@@ -54,8 +54,22 @@
       // 4) 真的全空 → 全新用戶
       return { records: [], players: DEFAULT_PLAYERS, onboarded: false, source: 'empty' };
     }
-    async function save() {}
-    async function writeBackup() {}
+    async function save(d) {
+      await a.prefSet(K.rec, JSON.stringify(d.records || []));
+      await a.prefSet(K.ply, JSON.stringify(d.players || DEFAULT_PLAYERS));
+      await a.prefSet(K.onb, String(!!d.onboarded));
+    }
+
+    async function writeBackup(d) {
+      const payload = JSON.stringify({ version: 1, exportedAt: a.now(), records: d.records || [], players: d.players || DEFAULT_PLAYERS });
+      try {
+        await a.fileWrite('backup_latest.json', payload);
+        await a.fileWrite('backup_' + a.today() + '.json', payload);
+        // 輪替：只保留最近 7 份帶日期快照
+        const snaps = (await a.fileList()).filter(n => /^backup_\d{4}-\d{2}-\d{2}\.json$/.test(n)).sort();
+        for (const old of snaps.slice(0, Math.max(0, snaps.length - 7))) await a.fileDelete(old);
+      } catch (_) { /* 備份失敗不影響主流程 */ }
+    }
     return { load, save, writeBackup, _K: K };
   }
   return { createStorage };

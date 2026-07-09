@@ -121,5 +121,26 @@
     }
     return { load, save, writeBackup, _K: K };
   }
-  return { createStorage };
+
+  function browserAdapter() {
+    const P = () => window.Capacitor?.Plugins?.Preferences;
+    const F = () => window.Capacitor?.Plugins?.Filesystem;
+    const DIR = 'DOCUMENTS';
+    const hasCap = () => !!(window.Capacitor?.isNativePlatform?.() && P() && F());
+    return {
+      async prefGet(k) { return hasCap() ? (await P().get({ key: k })).value : localStorage.getItem(k); },
+      async prefSet(k, v) { hasCap() ? await P().set({ key: k, value: v }) : localStorage.setItem(k, v); },
+      legacyGet(k) { return localStorage.getItem(k); },
+      async fileWrite(n, d) { if (F()) await F().writeFile({ path: n, data: d, directory: DIR, encoding: 'utf8' }); },
+      async fileRead(n) { try { return F() ? (await F().readFile({ path: n, directory: DIR, encoding: 'utf8' })).data : null; } catch { return null; } },
+      async fileList() { try { return F() ? (await F().readdir({ path: '', directory: DIR })).files.map(f => f.name ?? f) : []; } catch { return []; } },
+      async fileDelete(n) { try { if (F()) await F().deleteFile({ path: n, directory: DIR }); } catch {} },
+      today() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); },
+      now() { return new Date().toISOString(); },
+    };
+  }
+
+  const api = { createStorage, browserAdapter };
+  if (typeof window !== 'undefined') window.mahjongStore = createStorage(browserAdapter());
+  return api;
 });

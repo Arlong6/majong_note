@@ -127,3 +127,89 @@ test('每日快照只保留最近 7 份', async () => {
   assert.equal(snaps.includes('backup_2026-06-28.json'), false); // 最舊被砍
   assert.equal(snaps.includes('backup_2026-07-07.json'), true);  // 今日在
 });
+
+// ===== 回歸測試：資料安全修復 (fix/storage-migration) =====
+
+test('[Critical#1] migrated=true 但 pref records 損毀、legacy 有資料 → load 回傳 legacy 資料（非空）', async () => {
+  const a = makeAdapter({
+    pref: { [K.mig]: 'true', [K.rec]: 'not-valid-json{' },
+    legacy: { [K.rec]: JSON.stringify(R), [K.ply]: JSON.stringify(['X', 'Y']) },
+  });
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, R);
+  assert.ok(d.records.length > 0);
+});
+
+test('[Critical#1] migrated=true、pref 缺失、legacy 皆無，backup 有 → 回傳 backup 資料', async () => {
+  const a = makeAdapter({
+    pref: { [K.mig]: 'true' },
+    files: { 'backup_latest.json': JSON.stringify({ version: 1, records: R, players: ['Z'] }) },
+  });
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, R);
+  assert.equal(d.source, 'recovered');
+});
+
+test('[Critical#1] 合法空：pref records="[]" → 回傳空、不觸發救援（不復活備份）', async () => {
+  const a = makeAdapter({
+    pref: { [K.rec]: '[]' },
+    legacy: { [K.rec]: JSON.stringify(R) },
+    files: { 'backup_latest.json': JSON.stringify({ version: 1, records: R, players: ['Z'] }) },
+  });
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, []);
+  assert.equal(d.source, 'pref');
+  assert.equal(await a.prefGet(K.rec), '[]'); // 沒被舊資料覆蓋回去
+});
+
+test('[Critical#2] prefGet 拋例外 → load 不 throw、走救援、回傳有資料', async () => {
+  const a = makeAdapter({ legacy: { [K.rec]: JSON.stringify(R), [K.ply]: JSON.stringify(['A']) } });
+  a.prefGet = async () => { throw new Error('simulated prefGet crash'); };
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, R);
+  assert.ok(d.records.length > 0);
+});
+
+test('[Important#3] 遷移時 players 寫入損毀 → 不標記 migrated', async () => {
+  const players = ['A', 'B']; // 非預設值，才能與損毀後 fallback 到 DEFAULT_PLAYERS 的情況區分
+  const a = makeAdapter({ legacy: { [K.rec]: JSON.stringify(R), [K.ply]: JSON.stringify(players) } });
+  const origSet = a.prefSet.bind(a);
+  a.prefSet = async (k, v) => {
+    if (k === K.ply) return origSet(k, 'corrupted-not-json{'); // 模擬寫入時損毀
+    return origSet(k, v);
+  };
+  const d = await createStorage(a).load();
+  assert.equal(await a.prefGet(K.mig), null);   // 未標記 migrated
+  assert.deepEqual(d.records, R);               // 資料仍拿得到（回退 legacy）
+  assert.deepEqual(d.players, players);         // 拿到的是正確 players，不是損毀後的 fallback 值
+});
+
+test('[Important#4] save 空覆蓋非空 pref → 覆蓋前 backup_latest 已存有原本非空資料', async () => {
+  const a = makeAdapter({ pref: { [K.rec]: JSON.stringify(R), [K.ply]: JSON.stringify(['A']) } });
+  await createStorage(a).save({ records: [], players: [], onboarded: false });
+  assert.equal(a._files.has('backup_latest.json'), true);
+  const backup = JSON.parse(a._files.get('backup_latest.json'));
+  assert.deepEqual(backup.records, R);                       // 備份的是「覆蓋前」的非空資料
+  assert.equal(await a.prefGet(K.rec), JSON.stringify([]));  // 合法空寫入仍照常執行，不擋
+});
+
+test('[Minor#5] 反向救援後 onboarded 有被寫入 pref', async () => {
+  const a = makeAdapter({ files: { 'backup_latest.json': JSON.stringify({ version: 1, records: R, players: ['A'] }) } });
+  await createStorage(a).load();
+  assert.equal(await a.prefGet(K.onb), 'true');
+});
+
+test('[Minor#6] 輪替刪除：單一 fileDelete 失敗不中斷其餘刪除', async () => {
+  const files = {};
+  for (const d of ['2026-06-28','2026-06-29','2026-06-30','2026-07-01','2026-07-02','2026-07-03','2026-07-04','2026-07-05'])
+    files['backup_' + d + '.json'] = '{}';
+  const a = makeAdapter({ today: '2026-07-07', files });
+  const origDelete = a.fileDelete.bind(a);
+  a.fileDelete = async (n) => {
+    if (n === 'backup_2026-06-28.json') throw new Error('simulated delete fail'); // 最舊的那份故意失敗
+    return origDelete(n);
+  };
+  await createStorage(a).writeBackup({ records: R, players: [] });
+  // 8 舊 + 今日 = 9 → 該砍到 7；即使最舊的那份刪除失敗，第二舊的仍應被刪除
+  assert.equal(a._files.has('backup_2026-06-29.json'), false);
+});

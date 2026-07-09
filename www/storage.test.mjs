@@ -213,3 +213,61 @@ test('[Minor#6] 輪替刪除：單一 fileDelete 失敗不中斷其餘刪除', a
   // 8 舊 + 今日 = 9 → 該砍到 7；即使最舊的那份刪除失敗，第二舊的仍應被刪除
   assert.equal(a._files.has('backup_2026-06-29.json'), false);
 });
+
+// ===== 回歸測試：readPref 欄位隔離 (新 Critical，fix/storage-migration) =====
+// Bug: readPref() 把 records/players/onboarded 三個 prefGet 綁在同一個 try/catch。
+// 次要欄位（players/onboarded）偶發讀取失敗會讓整個 readPref 回 null，
+// load() 誤判成「pref 完全沒資料」而觸發救援，用舊快照覆寫良好的 records 並持久化。
+// 修法：records 獨立判斷是否回 null；players/onboarded 各自 try/catch，失敗只 fallback，不影響主鍵判斷。
+
+test('[Critical#新] records 有效但 prefGet(K.ply) 拋例外 → records 仍完整保留、players fallback、不觸發救援', async () => {
+  const a = makeAdapter({ pref: { [K.rec]: JSON.stringify(R) } });
+  const origGet = a.prefGet.bind(a);
+  a.prefGet = async (k) => {
+    if (k === K.ply) throw new Error('simulated players read crash');
+    return origGet(k);
+  };
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, R);              // 主鍵沒丟
+  assert.equal(d.source, 'pref');               // 沒有落到 migrated/recovered（代表沒觸發救援）
+  assert.deepEqual(d.players, DEFAULT_PLAYERS); // 次鍵 fallback
+  assert.equal(await a.prefGet(K.rec), JSON.stringify(R)); // pref 沒被覆寫
+});
+
+test('[Critical#新] records 有效但 prefGet(K.onb) 拋例外 → records 完整、onboarded=false、不遺失', async () => {
+  const a = makeAdapter({ pref: { [K.rec]: JSON.stringify(R), [K.ply]: JSON.stringify(['A']) } });
+  const origGet = a.prefGet.bind(a);
+  a.prefGet = async (k) => {
+    if (k === K.onb) throw new Error('simulated onboarded read crash');
+    return origGet(k);
+  };
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, R);
+  assert.equal(d.source, 'pref');
+  assert.equal(d.onboarded, false);
+  assert.equal(await a.prefGet(K.rec), JSON.stringify(R));
+});
+
+test('[Critical#新] save 空覆蓋檢查時即使 players 讀取 glitch，current 仍正確判為非空、備份防線正常運作', async () => {
+  const a = makeAdapter({ pref: { [K.rec]: JSON.stringify(R), [K.ply]: JSON.stringify(['A']) } });
+  const origGet = a.prefGet.bind(a);
+  a.prefGet = async (k) => {
+    if (k === K.ply) throw new Error('simulated players read crash');
+    return origGet(k);
+  };
+  await createStorage(a).save({ records: [], players: [], onboarded: false });
+  assert.equal(a._files.has('backup_latest.json'), true); // 備份防線沒被略過
+  const backup = JSON.parse(a._files.get('backup_latest.json'));
+  assert.deepEqual(backup.records, R);                    // 備份的是覆蓋前的非空 records
+  assert.equal(await a.prefGet(K.rec), JSON.stringify([])); // 合法空寫入仍照常執行
+});
+
+test('[Critical#新] 回歸防護：records 本身損毀仍要回 null 走救援（不能被欄位隔離改壞）', async () => {
+  const a = makeAdapter({
+    pref: { [K.rec]: 'not-valid-json{', [K.ply]: JSON.stringify(['A']) },
+    legacy: { [K.rec]: JSON.stringify(R), [K.ply]: JSON.stringify(['X', 'Y']) },
+  });
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, R);   // 走 legacy 救援
+  assert.equal(d.source, 'migrated');
+});

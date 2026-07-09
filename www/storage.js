@@ -11,13 +11,32 @@
     async function readPref() {
       // Critical#2：任何讀取例外（原生 Preferences API 拋錯、JSON 損毀等）都視為「這個來源沒資料」，
       // 絕不讓例外往外拋，否則 load() 會整個 reject，等於用戶開 app 直接白屏兼資料遺失。
+      //
+      // Critical（欄位隔離）：records（主鍵）與 players/onboarded（次要欄位）必須各自獨立判斷失敗，
+      // 不可綁在同一個 try/catch。理由：若三者共用一個 try/catch，次要欄位偶發讀取失敗
+      // （例如 prefGet(K.ply) 拋錯）會讓整個函式回 null，被 load()/save() 誤判成「pref 完全沒資料」，
+      // 進而觸發救援或用舊快照覆寫「明明是好的」records 並持久化——等於主鍵資料因次鍵故障而遺失/回退。
+      // 因此：只有 records 讀取失敗或 parse 後為 null，才代表主資料不可信、readPref 回 null。
+      // players/onboarded 各自獨立 try/catch，任何失敗都只 fallback 到預設值，絕不影響主鍵判斷。
+      let rec;
       try {
-        const rec = parse(await a.prefGet(K.rec), null);
-        if (rec === null) return null;
-        return { records: rec, players: parse(await a.prefGet(K.ply), DEFAULT_PLAYERS), onboarded: (await a.prefGet(K.onb)) === 'true' };
+        rec = parse(await a.prefGet(K.rec), null);
       } catch (_) {
         return null;
       }
+      if (rec === null) return null;
+
+      let players = DEFAULT_PLAYERS;
+      try {
+        players = parse(await a.prefGet(K.ply), DEFAULT_PLAYERS);
+      } catch (_) { /* 次鍵失敗不影響主鍵，fallback 預設值 */ }
+
+      let onboarded = false;
+      try {
+        onboarded = (await a.prefGet(K.onb)) === 'true';
+      } catch (_) { /* 次鍵失敗不影響主鍵，fallback false */ }
+
+      return { records: rec, players, onboarded };
     }
 
     async function load() {

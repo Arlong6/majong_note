@@ -10,6 +10,7 @@
   <title>麻將戰績追蹤器</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <script src="storage.js"></script>
   <script src="libs/react.min.js"></script>
   <script src="libs/react-dom.min.js"></script>
   <script src="libs/babel.min.js"></script>
@@ -100,14 +101,9 @@
 
     // ─── App ─────────────────────────────────────────────────────────────────
     const App = () => {
-      const [records, setRecords] = useState(() => {
-        try { const s = localStorage.getItem('mahjong_records'); return s ? JSON.parse(s) : []; }
-        catch { return []; }
-      });
-      const [players, setPlayers] = useState(() => {
-        try { const s = localStorage.getItem('mahjong_players'); return s ? JSON.parse(s) : ['阿明', '小華', '大強', '林小姐']; }
-        catch { return ['阿明', '小華', '大強', '林小姐']; }
-      });
+      const [loading, setLoading] = useState(true);
+      const [records, setRecords] = useState([]);
+      const [players, setPlayers] = useState(['阿明', '小華', '大強', '林小姐']);
 
       const [currentDate, setCurrentDate] = useState(new Date());
       const [activeTab, setActiveTab] = useState('calendar');
@@ -156,8 +152,21 @@
         touchStartX.current = null;
       };
 
-      useEffect(() => { localStorage.setItem('mahjong_records', JSON.stringify(records)); }, [records]);
-      useEffect(() => { localStorage.setItem('mahjong_players', JSON.stringify(players)); }, [players]);
+      useEffect(() => {
+        (async () => {
+          const d = await window.mahjongStore.load();
+          setRecords(d.records); setPlayers(d.players);
+          setLoading(false);
+        })();
+      }, []);
+
+      // 存檔：載入完成後才寫，避免用初始空值覆蓋；debounce 備份
+      useEffect(() => {
+        if (loading) return;
+        window.mahjongStore.save({ records, players, onboarded: true });
+        const t = setTimeout(() => window.mahjongStore.writeBackup({ records, players }), 1500);
+        return () => clearTimeout(t);
+      }, [records, players, loading]);
 
       // ─── Computed values ─────────────────────────────────────────────────
       const totalBalance = useMemo(() =>
@@ -364,6 +373,8 @@
         : [];
 
       const maxAbsBalance = Math.max(...statsData.monthlyData.map(m => Math.abs(m.balance)), 1);
+
+      if (loading) return (<div className="flex items-center justify-center h-screen text-gray-400">載入中…</div>);
 
       // ─── Render ──────────────────────────────────────────────────────────
       return (

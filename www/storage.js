@@ -52,7 +52,9 @@
       const legacyRec = parse(a.legacyGet(K.rec), null);
       if (legacyRec !== null) {
         const players = parse(a.legacyGet(K.ply), DEFAULT_PLAYERS);
-        const onboarded = a.legacyGet(K.onb) === 'true';
+        // 舊 app 存的是 '1'(見原 finishOnboarding),新 app 存 'true'——兩者都當已完成引導,避免遷移用戶重看引導
+        const legacyOnb = a.legacyGet(K.onb);
+        const onboarded = legacyOnb === 'true' || legacyOnb === '1';
         try {
           // 防線#1：遷移前先備份原始 localStorage
           await a.fileWrite('pre_migration_backup.json', JSON.stringify({ version: 1, exportedAt: a.now(), records: legacyRec, players }));

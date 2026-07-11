@@ -60,6 +60,13 @@ test('遷移：localStorage 有資料 → 複製進 Preferences + 回讀驗證 +
   assert.equal(a._files.has('pre_migration_backup.json'), true); // 防線#1 遷移前備份
 });
 
+test("遷移：舊 app 的 onboarded='1' 也視為已完成引導(真機測試發現)", async () => {
+  const a = makeAdapter({ legacy: { [K.rec]: JSON.stringify(R), [K.onb]: '1' } });   // 舊 app 存 '1' 不是 'true'
+  const d = await createStorage(a).load();
+  assert.equal(d.onboarded, true);                              // 不能因 '1'!=='true' 讓遷移用戶重看引導
+  assert.equal(await a.prefGet(K.onb), 'true');                 // 遷移後 pref 內存成新格式 'true'
+});
+
 test('遷移冪等：已標記 migrated 不再讀 localStorage、不覆蓋', async () => {
   const a = makeAdapter({ pref: { [K.rec]: JSON.stringify(R), [K.mig]: 'true' }, legacy: { [K.rec]: JSON.stringify([{ id: 9 }]) } });
   const d = await createStorage(a).load();

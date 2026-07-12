@@ -1,0 +1,41 @@
+PODS:
+  - Capacitor (8.2.0):
+    - CapacitorCordova
+  - CapacitorCordova (8.2.0)
+  - CapacitorFilesystem (8.1.2):
+    - Capacitor
+    - IONFilesystemLib (~> 1.1.1)
+  - CapacitorPreferences (8.0.1):
+    - Capacitor
+  - IONFilesystemLib (1.1.2)
+
+DEPENDENCIES:
+  - "Capacitor (from `../../node_modules/@capacitor/ios`)"
+  - "CapacitorCordova (from `../../node_modules/@capacitor/ios`)"
+  - "CapacitorFilesystem (from `../../node_modules/@capacitor/filesystem`)"
+  - "CapacitorPreferences (from `../../node_modules/@capacitor/preferences`)"
+
+SPEC REPOS:
+  trunk:
+    - IONFilesystemLib
+
+EXTERNAL SOURCES:
+  Capacitor:
+    :path: "../../node_modules/@capacitor/ios"
+  CapacitorCordova:
+    :path: "../../node_modules/@capacitor/ios"
+  CapacitorFilesystem:
+    :path: "../../node_modules/@capacitor/filesystem"
+  CapacitorPreferences:
+    :path: "../../node_modules/@capacitor/preferences"
+
+SPEC CHECKSUMS:
+  Capacitor: 49a454e1cdbd520bc106a220adca7913536a4933
+  CapacitorCordova: a9ac88d84a1f5280f33b349fe50fce1902683ac0
+  CapacitorFilesystem: 2db285a1ac6e475cc27cae2e1bea999000f9e2be
+  CapacitorPreferences: cca2021f386efb75947c850334447d9ff22b14f1
+  IONFilesystemLib: 21a63377696b2d8fab5632ecfb7d2ac67bddb68a
+
+PODFILE CHECKSUM: 5d2d76e65d24cef01268c3996925c4f04f5bf396
+
+COCOAPODS: 1.16.2

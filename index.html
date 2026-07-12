@@ -10,6 +10,7 @@
   <title>麻將戰績追蹤器</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <script src="storage.js"></script>
   <script src="libs/react.min.js"></script>
   <script src="libs/react-dom.min.js"></script>
   <script src="libs/babel.min.js"></script>
@@ -100,14 +101,9 @@
 
     // ─── App ─────────────────────────────────────────────────────────────────
     const App = () => {
-      const [records, setRecords] = useState(() => {
-        try { const s = localStorage.getItem('mahjong_records'); return s ? JSON.parse(s) : []; }
-        catch { return []; }
-      });
-      const [players, setPlayers] = useState(() => {
-        try { const s = localStorage.getItem('mahjong_players'); return s ? JSON.parse(s) : ['阿明', '小華', '大強', '林小姐']; }
-        catch { return ['阿明', '小華', '大強', '林小姐']; }
-      });
+      const [loading, setLoading] = useState(true);
+      const [records, setRecords] = useState([]);
+      const [players, setPlayers] = useState(['阿明', '小華', '大強', '林小姐']);
 
       const [currentDate, setCurrentDate] = useState(new Date());
       const [activeTab, setActiveTab] = useState('calendar');
@@ -132,7 +128,7 @@
       const touchStartX = useRef(null);
 
       // Onboarding
-      const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('mahjong_onboarded'));
+      const [showOnboarding, setShowOnboarding] = useState(false);  // 由 storage.load() 的 onboarded 決定,見載入 effect
       const [onboardingStep, setOnboardingStep] = useState(0);
 
       const ONBOARDING_SLIDES = [
@@ -142,7 +138,7 @@
         { emoji: '💾', title: '資料安全\n隨時備份', desc: '換手機前到「牌友」頁面匯出備份，新裝置上再匯入，所有紀錄完整保留。', accent: '#10B981' },
       ];
 
-      const finishOnboarding = () => { localStorage.setItem('mahjong_onboarded', '1'); setShowOnboarding(false); };
+      const finishOnboarding = () => { setShowOnboarding(false); };  // 持久化由存檔 effect(onboarded: !showOnboarding)處理
       const nextOnboardingStep = () => {
         if (onboardingStep < ONBOARDING_SLIDES.length - 1) setOnboardingStep(s => s + 1);
         else finishOnboarding();
@@ -156,8 +152,22 @@
         touchStartX.current = null;
       };
 
-      useEffect(() => { localStorage.setItem('mahjong_records', JSON.stringify(records)); }, [records]);
-      useEffect(() => { localStorage.setItem('mahjong_players', JSON.stringify(players)); }, [players]);
+      useEffect(() => {
+        (async () => {
+          const d = await window.mahjongStore.load();
+          setRecords(d.records); setPlayers(d.players);
+          setShowOnboarding(!d.onboarded);   // 用持久化的 onboarded,localStorage 被清也不會重看引導
+          setLoading(false);
+        })();
+      }, []);
+
+      // 存檔：載入完成後才寫，避免用初始空值覆蓋；debounce 備份
+      useEffect(() => {
+        if (loading) return;
+        window.mahjongStore.save({ records, players, onboarded: !showOnboarding });
+        const t = setTimeout(() => window.mahjongStore.writeBackup({ records, players }), 1500);
+        return () => clearTimeout(t);
+      }, [records, players, showOnboarding, loading]);
 
       // ─── Computed values ─────────────────────────────────────────────────
       const totalBalance = useMemo(() =>
@@ -364,6 +374,8 @@
         : [];
 
       const maxAbsBalance = Math.max(...statsData.monthlyData.map(m => Math.abs(m.balance)), 1);
+
+      if (loading) return (<div className="flex items-center justify-center h-screen text-gray-400">載入中…</div>);
 
       // ─── Render ──────────────────────────────────────────────────────────
       return (

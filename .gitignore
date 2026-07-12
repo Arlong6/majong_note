@@ -5,3 +5,4 @@ ios/App/App.xcworkspace/xcuserdata/
 ios/App/build/
 ios/App/DerivedData/
 *.DS_Store
+.superpowers/

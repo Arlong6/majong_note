@@ -32,34 +32,43 @@
     @keyframes pop { 0% { transform: scale(.82); opacity: 0; } 60% { transform: scale(1.04); } 100% { transform: scale(1); opacity: 1; } }
     .animate-pop { animation: pop .45s cubic-bezier(.2,.9,.3,1.25) both; }
 
-    /* ── 麻將牌視覺系統:紅中財氣紅 / 象牙牌面 / 墨 / 翡翠發 ───────────────── */
+    /* ── 水墨印章視覺系統:米紙 / 墨 / 唯一的紅(勝+紅中印) ───────────────── */
     :root {
-      --red: #C4122F;        /* 紅中 — 贏 */
-      --red-deep: #96061F;
-      --jade: #0F7357;       /* 發 — 輸(沉穩) */
-      --ink: #241F1C;        /* 墨 — 主文字 */
-      --paper: #FAF5EB;      /* 米色紙 — 底 */
-      --paper-cool: #F1F0EC; /* 閉關狀態的冷底 */
-      --ivory: #FCFAF3;      /* 牌面 — 卡片 */
-      --gold: #C7A35A;
+      --paper: #F4EEE1;   /* 米紙 — 底 */
+      --ink: #201C18;     /* 墨 — 主文字 / hero */
+      --ink2: #4A433C;    /* 次墨 — 輸(不用綠) */
+      --red: #C0392B;     /* 全畫面唯一的紅 — 勝 + 紅中印 */
+      --line: #D8CFBC;    /* 髮絲線 */
+      --dim: #9A9284;
     }
-    body { background: var(--paper); color: var(--ink); }
-    /* 數字一律等寬,對齊像計分板 */
+    body { background: var(--paper); color: var(--ink);
+      background-image: radial-gradient(rgba(32,28,24,.03) .5px, transparent .5px); background-size: 5px 5px; }
     .num, .font-black { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
-    /* 全域配色重映射(蓋過 Tailwind runtime 注入) */
+    /* 全域重映射:單色墨系,唯一的紅只給勝;輸=墨灰而非綠 */
     .text-red-500 { color: var(--red) !important; }
-    .bg-red-50 { background: #FBEAE7 !important; }
-    .text-emerald-700, .text-emerald-600 { color: var(--jade) !important; }
-    .bg-emerald-50 { background: #E7F2ED !important; }
-    .bg-slate-100 { background: var(--paper-cool) !important; }
-    .bg-slate-200\/80 { background: rgba(241,240,236,.82) !important; }
-    /* 卡片=象牙牌面:暖白 + 牌面高光 + 柔和落影 */
-    .bg-white { background: var(--ivory) !important; }
-    .bg-white\/80 { background: rgba(252,250,243,.82) !important; }
-    .shadow-sm { box-shadow: 0 1px 0 rgba(255,255,255,.75) inset, 0 8px 24px -14px rgba(60,40,20,.28) !important; }
-    /* 財氣計分板 hero 數字 */
-    .hero-num { font-size: 3.25rem; line-height: .95; font-weight: 900; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
-    .fortune-band { display: inline-flex; align-items: center; gap: .4rem; padding: .18rem .6rem; border-radius: 999px; font-weight: 800; letter-spacing: .04em; }
+    .bg-red-50 { background: rgba(192,57,43,.09) !important; }
+    .text-emerald-700, .text-emerald-600 { color: var(--ink2) !important; }
+    .bg-emerald-50 { background: rgba(32,28,24,.06) !important; }
+    .bg-emerald-500 { background: var(--ink2) !important; }   /* 輸的日曆點 → 墨灰,不用綠 */
+    /* 藍色全部收進墨系(tab active/按鈕/今天/進度條) */
+    .text-blue-600, .text-blue-500 { color: var(--ink) !important; }
+    .bg-blue-600, .bg-blue-400 { background: var(--ink) !important; }
+    .bg-blue-50\/50 { background: rgba(32,28,24,.05) !important; }
+    .focus\:ring-blue-500:focus { --tw-ring-color: rgba(192,57,43,.4) !important; }
+    .bg-slate-100, .bg-orange-50\/50 { background: var(--paper) !important; }
+    .bg-slate-200\/80 { background: rgba(244,238,225,.82) !important; }
+    /* 卡片=乾淨米白 + 髮絲邊,弱化陰影(極簡) */
+    .bg-white { background: #FBF8F1 !important; }
+    .bg-white\/80 { background: rgba(244,238,225,.82) !important; }
+    .shadow-sm { box-shadow: 0 1px 3px rgba(32,28,24,.05) !important; }
+    .border-orange-100, .border-slate-200, .border-slate-300, .border-gray-100, .border-gray-50, .border-gray-200 { border-color: var(--line) !important; }
+    /* hero — 墨字,不用紅(紅留給印章) */
+    .hero-num { font-size: 3.25rem; line-height: .92; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+    /* 紅中印章 — 全畫面唯一的張力 */
+    .seal { width: 54px; height: 54px; border: 2px solid var(--red); border-radius: 9px; color: var(--red);
+      display: grid; place-items: center; font-size: 21px; font-weight: 900; transform: rotate(-6deg);
+      line-height: 1; letter-spacing: -2px; box-shadow: 0 0 0 3px var(--paper), 0 0 0 4px rgba(192,57,43,.15); }
+    .seal.lose { border-color: var(--ink2); color: var(--ink2); box-shadow: 0 0 0 3px var(--paper), 0 0 0 4px rgba(32,28,24,.1); }
   </style>
 </head>
 <body>
@@ -414,21 +423,21 @@
 
           {/* Header */}
           <header className={`sticky top-0 z-20 px-6 pt-16 pb-5 border-b transition-all duration-500 ${isWinningOverall ? 'bg-white/80 border-orange-100 backdrop-blur-md' : 'bg-slate-200/80 border-slate-300 backdrop-blur-md'}`}>
-            <div className="flex items-center justify-between mb-4">
-              <h1 className="text-lg font-black text-gray-800 flex items-center gap-1.5 tracking-tight">
-                麻將戰績 <span className="text-xl">{isWinningOverall ? '🀄' : '🧘'}</span>
-              </h1>
-              <span className={`fortune-band text-[11px] ${isWinningOverall ? 'text-red-500' : 'text-emerald-700'}`}
-                style={{ background: isWinningOverall ? 'rgba(196,18,47,.08)' : 'rgba(15,115,87,.09)' }}>
+            <div className="flex items-center justify-between mb-6">
+              <h1 className="text-xl font-black tracking-[0.08em]" style={{ color: 'var(--ink)' }}>麻將戰績</h1>
+              <span className="text-[11px] font-bold text-gray-500 tracking-[0.1em]">
                 {isWinningOverall ? '紅不讓 · 氣勢正旺' : '閉關中 · 韜光養晦'}
               </span>
             </div>
-            <div>
-              <span className="text-[11px] text-gray-400 font-black tracking-[0.28em]">總結算</span>
-              <div className={`hero-num mt-1 ${isWinningOverall ? 'text-red-500' : 'text-emerald-700'}`}>
-                {totalBalance >= 0 ? '+' : '−'}{Math.abs(totalBalance).toLocaleString()}
-                <span className="text-lg font-black text-gray-300 ml-1.5">元</span>
+            <div className="flex items-end justify-between">
+              <div>
+                <span className="text-[10px] text-gray-400 font-black tracking-[0.35em]">總結算</span>
+                <div className="hero-num mt-1" style={{ color: 'var(--ink)' }}>
+                  {totalBalance >= 0 ? '+' : '−'}{Math.abs(totalBalance).toLocaleString()}
+                  <span className="text-base font-black text-gray-400 ml-1">元</span>
+                </div>
               </div>
+              <div className={`seal ${isWinningOverall ? '' : 'lose'}`}>{isWinningOverall ? '紅中' : '白板'}</div>
             </div>
           </header>
 
@@ -695,7 +704,8 @@
             </button>
             <button
               onClick={() => { resetForm(); setSelectedDate(new Date()); setIsAddModalOpen(true); }}
-              className={`-mt-10 mx-5 w-14 h-14 rounded-full flex items-center justify-center text-white shadow-xl active:scale-90 transition-all shrink-0 ${isWinningOverall ? 'bg-red-500' : 'bg-slate-800'}`}>
+              className="-mt-10 mx-5 w-14 h-14 rounded-full flex items-center justify-center text-white shadow-xl active:scale-90 transition-all shrink-0"
+              style={{ background: 'var(--ink)' }}>
               <div className="w-7 h-7"><PlusIcon /></div>
             </button>
             <button onClick={() => setActiveTab('players')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'players' ? 'text-blue-600' : 'text-gray-300'}`}>

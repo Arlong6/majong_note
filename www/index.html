@@ -29,6 +29,37 @@
     .animate-slide-up { animation: slide-up 0.3s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     .animate-in { animation: fadeIn 0.35s ease-out; }
+    @keyframes pop { 0% { transform: scale(.82); opacity: 0; } 60% { transform: scale(1.04); } 100% { transform: scale(1); opacity: 1; } }
+    .animate-pop { animation: pop .45s cubic-bezier(.2,.9,.3,1.25) both; }
+
+    /* ── 麻將牌視覺系統:紅中財氣紅 / 象牙牌面 / 墨 / 翡翠發 ───────────────── */
+    :root {
+      --red: #C4122F;        /* 紅中 — 贏 */
+      --red-deep: #96061F;
+      --jade: #0F7357;       /* 發 — 輸(沉穩) */
+      --ink: #241F1C;        /* 墨 — 主文字 */
+      --paper: #FAF5EB;      /* 米色紙 — 底 */
+      --paper-cool: #F1F0EC; /* 閉關狀態的冷底 */
+      --ivory: #FCFAF3;      /* 牌面 — 卡片 */
+      --gold: #C7A35A;
+    }
+    body { background: var(--paper); color: var(--ink); }
+    /* 數字一律等寬,對齊像計分板 */
+    .num, .font-black { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+    /* 全域配色重映射(蓋過 Tailwind runtime 注入) */
+    .text-red-500 { color: var(--red) !important; }
+    .bg-red-50 { background: #FBEAE7 !important; }
+    .text-emerald-700, .text-emerald-600 { color: var(--jade) !important; }
+    .bg-emerald-50 { background: #E7F2ED !important; }
+    .bg-slate-100 { background: var(--paper-cool) !important; }
+    .bg-slate-200\/80 { background: rgba(241,240,236,.82) !important; }
+    /* 卡片=象牙牌面:暖白 + 牌面高光 + 柔和落影 */
+    .bg-white { background: var(--ivory) !important; }
+    .bg-white\/80 { background: rgba(252,250,243,.82) !important; }
+    .shadow-sm { box-shadow: 0 1px 0 rgba(255,255,255,.75) inset, 0 8px 24px -14px rgba(60,40,20,.28) !important; }
+    /* 財氣計分板 hero 數字 */
+    .hero-num { font-size: 3.25rem; line-height: .95; font-weight: 900; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+    .fortune-band { display: inline-flex; align-items: center; gap: .4rem; padding: .18rem .6rem; border-radius: 999px; font-weight: 800; letter-spacing: .04em; }
   </style>
 </head>
 <body>
@@ -383,20 +414,20 @@
 
           {/* Header */}
           <header className={`sticky top-0 z-20 px-6 pt-16 pb-5 border-b transition-all duration-500 ${isWinningOverall ? 'bg-white/80 border-orange-100 backdrop-blur-md' : 'bg-slate-200/80 border-slate-300 backdrop-blur-md'}`}>
-            <div className="flex justify-between items-end">
-              <div>
-                <h1 className="text-2xl font-black text-gray-800 flex items-center gap-2">
-                  麻將戰績 {isWinningOverall ? '🧧' : '🧘'}
-                </h1>
-                <p className={`text-[10px] font-bold mt-0.5 uppercase tracking-[0.2em] ${isWinningOverall ? 'text-orange-500' : 'text-slate-500'}`}>
-                  {isWinningOverall ? '紅不讓・氣勢正旺' : '閉關中・韜光養晦'}
-                </p>
-              </div>
-              <div className="text-right">
-                <span className="text-[10px] text-gray-400 font-bold block">總結算</span>
-                <span className={`text-xl font-black ${isWinningOverall ? 'text-red-500' : 'text-emerald-700'}`}>
-                  {totalBalance >= 0 ? '+' : ''}{totalBalance.toLocaleString()}
-                </span>
+            <div className="flex items-center justify-between mb-4">
+              <h1 className="text-lg font-black text-gray-800 flex items-center gap-1.5 tracking-tight">
+                麻將戰績 <span className="text-xl">{isWinningOverall ? '🀄' : '🧘'}</span>
+              </h1>
+              <span className={`fortune-band text-[11px] ${isWinningOverall ? 'text-red-500' : 'text-emerald-700'}`}
+                style={{ background: isWinningOverall ? 'rgba(196,18,47,.08)' : 'rgba(15,115,87,.09)' }}>
+                {isWinningOverall ? '紅不讓 · 氣勢正旺' : '閉關中 · 韜光養晦'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[11px] text-gray-400 font-black tracking-[0.28em]">總結算</span>
+              <div className={`hero-num mt-1 ${isWinningOverall ? 'text-red-500' : 'text-emerald-700'}`}>
+                {totalBalance >= 0 ? '+' : '−'}{Math.abs(totalBalance).toLocaleString()}
+                <span className="text-lg font-black text-gray-300 ml-1.5">元</span>
               </div>
             </div>
           </header>

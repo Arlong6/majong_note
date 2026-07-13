@@ -55,8 +55,6 @@ jobs:
             -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
             -allowProvisioningUpdates \
             DEVELOPMENT_TEAM=MS5DWUANB6 \
-            CODE_SIGN_STYLE=Automatic \
-            "CODE_SIGN_IDENTITY=Apple Distribution" \
             MARKETING_VERSION=${{ env.APP_VERSION }} \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             archive

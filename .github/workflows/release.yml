@@ -38,41 +38,14 @@ jobs:
           mkdir -p ~/.private_keys
           echo "$ASC_PRIVATE_KEY" > ~/.private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8
 
-      - name: Extract version from tag
-        run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
-
-      - name: Archive
-        run: |
-          xcodebuild \
-            -workspace ios/App/App.xcworkspace \
-            -scheme App \
-            -configuration Release \
-            -archivePath $RUNNER_TEMP/App.xcarchive \
-            -authenticationKeyPath ~/.private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
-            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
-            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
-            -allowProvisioningUpdates \
-            DEVELOPMENT_TEAM=MS5DWUANB6 \
-            MARKETING_VERSION=${{ env.APP_VERSION }} \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            archive
-
-      - name: Export IPA
-        run: |
-          xcodebuild \
-            -exportArchive \
-            -archivePath $RUNNER_TEMP/App.xcarchive \
-            -exportPath $RUNNER_TEMP/export \
-            -exportOptionsPlist .github/ExportOptions.plist \
-            -authenticationKeyPath ~/.private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
-            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
-            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
-            -allowProvisioningUpdates
-
-      # Upload is handled automatically by Export IPA step above
-      # (ExportOptions.plist has uploadPackage=true + method=app-store-connect)
+      - name: Fastlane release (create signing via ASC API + build + upload)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_PATH: /Users/runner/.private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8
+          APP_VERSION: ${{ github.ref_name }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: fastlane release
 
       - name: Cleanup
         if: always()

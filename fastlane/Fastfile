@@ -21,33 +21,44 @@ platform :ios do
 
   desc "Build and release to App Store"
   lane :release do
-    # Bump version from git tag (e.g. v1.2.0)
-    version = ENV["APP_VERSION"] || "1.0"
+    setup_ci   # CI 上建立並解鎖臨時 keychain,供發佈憑證安裝
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_filepath: File.expand_path(ENV["ASC_KEY_PATH"]),
+      in_house: false
+    )
+
+    version = (ENV["APP_VERSION"] || "1.0").sub(/^v/, "")
     build = ENV["BUILD_NUMBER"] || number_of_commits.to_s
 
-    increment_version_number(
-      version_number: version,
-      xcodeproj: "ios/App/App.xcodeproj"
-    )
-    increment_build_number(
-      build_number: build,
-      xcodeproj: "ios/App/App.xcodeproj"
+    # CI 上沒有現成發佈憑證,用 API 金鑰建立/取得 App Store 憑證與 profile
+    cert(api_key: api_key)
+    sigh(api_key: api_key, app_identifier: "com.arlong.mahjong", platform: "ios")
+
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: "ios/App/App.xcodeproj",
+      team_id: "MS5DWUANB6",
+      code_sign_identity: "Apple Distribution",
+      bundle_identifier: "com.arlong.mahjong",
+      profile_name: lane_context[SharedValues::SIGH_NAME]
     )
 
-    sync_code_signing(
-      type: "appstore",
-      readonly: true
-    )
     build_app(
       workspace: "ios/App/App.xcworkspace",
       scheme: "App",
       configuration: "Release",
-      export_method: "app-store"
+      export_method: "app-store",
+      xcargs: "MARKETING_VERSION=#{version} CURRENT_PROJECT_VERSION=#{build}"
     )
     upload_to_app_store(
+      api_key: api_key,
       skip_metadata: true,
       skip_screenshots: true,
-      submit_for_review: false
+      submit_for_review: false,
+      precheck_include_in_app_purchases: false
     )
   end
 

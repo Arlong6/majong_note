@@ -3,7 +3,7 @@
   "version": "1.2.2",
   "main": "www/index.html",
   "scripts": {
-    "test": "node --test www/*.test.mjs",
+    "test": "node --test tests/*.test.mjs",
     "sync:web": "cp www/index.html www/storage.js www/sw.js www/manifest.json . && echo '根目錄網頁版(GitHub Pages)已同步自 www/'",
     "sync": "npm run sync:web && npx cap sync ios",
     "check": "npm test && npm run sync:web && git diff --quiet -- index.html storage.js sw.js manifest.json && echo '根目錄與 www/ 一致' || (echo '根目錄與 www/ 不同步,已自動更新,請 commit' && exit 1)"

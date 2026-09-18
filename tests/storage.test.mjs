@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { createStorage } = require('./storage.js');
+const { createStorage } = require('../www/storage.js');
 
 // 記憶體 fake adapter，模擬 Preferences / Filesystem / localStorage
 export function makeAdapter(seed = {}) {

@@ -12,9 +12,10 @@ export function makeAdapter(seed = {}) {
   return {
     _pref: pref, _files: files, _legacy: legacy,
     failPrefSetOn: seed.failPrefSetOn || null,
+    failLegacyGetOn: seed.failLegacyGetOn || null,
     async prefGet(k) { return pref.has(k) ? pref.get(k) : null; },
     async prefSet(k, v) { if (this.failPrefSetOn === k) throw new Error('simulated pref fail'); pref.set(k, v); },
-    legacyGet(k) { return legacy.has(k) ? legacy.get(k) : null; },
+    legacyGet(k) { if (this.failLegacyGetOn === k || this.failLegacyGetOn === '*') throw new Error('simulated legacyGet fail'); return legacy.has(k) ? legacy.get(k) : null; },
     async fileWrite(n, d) { files.set(n, d); },
     async fileRead(n) { return files.has(n) ? files.get(n) : null; },
     async fileList() { return [...files.keys()]; },
@@ -277,4 +278,119 @@ test('[Critical#新] 回歸防護：records 本身損毀仍要回 null 走救援
   const d = await createStorage(a).load();
   assert.deepEqual(d.records, R);   // 走 legacy 救援
   assert.equal(d.source, 'migrated');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1.2.2 新增：legacyGet 例外隔離 / save 不再靜默失敗 / 匯入 schema 驗證
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('[1.2.2-A2] legacyGet 拋例外 → load 不 reject，仍走備份救援', async () => {
+  const a = makeAdapter({
+    failLegacyGetOn: '*',
+    files: { 'backup_latest.json': JSON.stringify({ version: 1, records: R, players: ['A'] }) },
+  });
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, R);
+  assert.equal(d.source, 'recovered');
+});
+
+test('[1.2.2-A2] legacyGet 拋例外且無備份 → 回全新用戶狀態，不 throw', async () => {
+  const a = makeAdapter({ failLegacyGetOn: '*' });
+  const d = await createStorage(a).load();
+  assert.deepEqual(d.records, []);
+  assert.equal(d.source, 'empty');
+});
+
+test('[1.2.2-A1] save 全部成功 → { ok: true, failed: [] }', async () => {
+  const a = makeAdapter();
+  const r = await createStorage(a).save({ records: R, players: ['A'], onboarded: true });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.failed, []);
+  assert.equal(await a.prefGet(K.rec), JSON.stringify(R));
+});
+
+test('[1.2.2-A1] save 主鍵寫入失敗 → 不 throw，回報 failed 含 records', async () => {
+  const a = makeAdapter({ failPrefSetOn: K.rec });
+  const r = await createStorage(a).save({ records: R, players: ['A'], onboarded: true });
+  assert.equal(r.ok, false);
+  assert.ok(r.failed.includes('records'));
+  assert.equal(await a.prefGet(K.ply), JSON.stringify(['A'])); // 次鍵仍然寫入，不因主鍵失敗而中斷
+});
+
+test('[1.2.2-A1] save 主鍵寫入失敗 → 立即寫緊急備份，資料不消失', async () => {
+  const a = makeAdapter({ failPrefSetOn: K.rec });
+  await createStorage(a).save({ records: R, players: ['A'], onboarded: true });
+  const b = JSON.parse(a._files.get('backup_latest.json'));
+  assert.deepEqual(b.records, R);
+});
+
+test('[1.2.2-A1] save 次鍵失敗不影響主鍵寫入成功', async () => {
+  const a = makeAdapter({ failPrefSetOn: K.ply });
+  const r = await createStorage(a).save({ records: R, players: ['A'], onboarded: true });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.failed, ['players']);
+  assert.equal(await a.prefGet(K.rec), JSON.stringify(R));
+});
+
+// ── validateBackup ───────────────────────────────────────────────────────────
+const { validateBackup, newId } = createStorage(makeAdapter());
+const GOOD = { id: 'x1', date: '2026-07-07T00:00:00.000Z', amount: 500, type: 'win', note: '', participants: ['阿明'] };
+
+test('[1.2.2-A3] validateBackup 拒絕非物件', () => {
+  for (const bad of [null, undefined, 'abc', 123, [1, 2, 3]]) {
+    assert.equal(validateBackup(bad).ok, false, String(bad));
+  }
+});
+
+test('[1.2.2-A3] validateBackup 拒絕空物件 {} 與 records 非陣列', () => {
+  assert.equal(validateBackup({}).ok, false);
+  assert.equal(validateBackup({ records: 'abc' }).ok, false);
+  assert.equal(validateBackup({ records: { a: 1 } }).ok, false);
+});
+
+test('[1.2.2-A3] validateBackup 拒絕金額無效的紀錄', () => {
+  assert.equal(validateBackup({ records: [{ ...GOOD, amount: 'abc' }] }).ok, false);
+  assert.equal(validateBackup({ records: [{ ...GOOD, amount: 0 }] }).ok, false);
+  assert.equal(validateBackup({ records: [{ ...GOOD, amount: -5 }] }).ok, false);
+  assert.equal(validateBackup({ records: [{ ...GOOD, amount: undefined }] }).ok, false);
+});
+
+test('[1.2.2-A3] validateBackup 拒絕日期無效的紀錄', () => {
+  assert.equal(validateBackup({ records: [{ ...GOOD, date: undefined }] }).ok, false);
+  assert.equal(validateBackup({ records: [{ ...GOOD, date: 'not-a-date' }] }).ok, false);
+});
+
+test('[1.2.2-A3] validateBackup 拒絕 type 非 win/loss', () => {
+  assert.equal(validateBackup({ records: [{ ...GOOD, type: 'draw' }] }).ok, false);
+  assert.equal(validateBackup({ records: [{ ...GOOD, type: undefined }] }).ok, false);
+});
+
+test('[1.2.2-A3] validateBackup 接受合法備份並正規化欄位', () => {
+  const r = validateBackup({
+    records: [{ date: '2026-07-07', amount: '500', type: 'win' }],
+    players: ['阿明', 123, '  ', '小華'],
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.records[0].amount, 500);        // 字串數字 → number
+  assert.equal(typeof r.records[0].note, 'string'); // 缺 note → ''
+  assert.deepEqual(r.records[0].participants, []);  // 缺 participants → []
+  assert.ok(r.records[0].id);                    // 缺 id → 自動補
+  assert.deepEqual(r.players, ['阿明', '小華']);  // 濾掉非字串與空白
+});
+
+test('[1.2.2-A3] validateBackup 對重複 id 重新產生，確保唯一', () => {
+  const r = validateBackup({ records: [{ ...GOOD, id: 'dup' }, { ...GOOD, id: 'dup' }] });
+  assert.equal(r.ok, true);
+  assert.notEqual(r.records[0].id, r.records[1].id);
+});
+
+test('[1.2.2-A3] validateBackup 允許空 records（合法的清空備份）', () => {
+  const r = validateBackup({ records: [], players: [] });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.records, []);
+});
+
+test('[1.2.2-B5] newId 連續呼叫不重複', () => {
+  const ids = new Set(Array.from({ length: 500 }, () => newId()));
+  assert.equal(ids.size, 500);
 });

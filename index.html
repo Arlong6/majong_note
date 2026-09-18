@@ -72,10 +72,129 @@
   </style>
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <div style="max-width:420px;margin:0 auto;padding:96px 28px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#2B2621">
+      <p style="font-size:17px;font-weight:800;margin:0 0 10px">麻將戰績無法載入</p>
+      <p style="font-size:14px;line-height:1.7;color:#4A433C;margin:0 0 18px">
+        程式沒有正常啟動。你的紀錄仍然保存在裝置上，沒有遺失。
+      </p>
+      <p style="font-size:14px;line-height:1.7;color:#4A433C;margin:0">
+        請先完全關閉 App 再重新開啟。若重開後仍是這個畫面，
+        <strong>請不要刪除 App</strong>（刪除會連同內部備份一起清除），
+        直接來信 arlong6@gmail.com，我會協助你把資料救回來。
+      </p>
+    </div>
+  </div>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
+
+    // ─── 備份輸出（匯出與當機救援共用）──────────────────────────────────────
+    const backupFileName = () => {
+      const d = new Date();
+      return `麻將戰績_${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.json`;
+    };
+
+    // 舊版用 <a download> 觸發下載。WKWebView 沒有 WKDownloadDelegate，a.download 是 no-op：
+    // 使用者按「匯出備份」什麼都不會發生，而且整個函式沒有 try/catch 也沒有成功回饋，
+    // 完全靜默。onboarding 第 4 頁卻正是在教使用者用這條路換手機。
+    // 改成：原生環境寫進暫存檔後開系統分享（可存到「檔案」App 或傳給自己），
+    // 非原生環境才退回瀏覽器下載。
+    async function shareBackup(records, players) {
+      const payload = JSON.stringify(
+        { version: 1, exportedAt: new Date().toISOString(), records: records || [], players: players || [] },
+        null, 2
+      );
+      const fn = backupFileName();
+      const Cap = window.Capacitor;
+      const isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform());
+      const FS = Cap && Cap.Plugins && Cap.Plugins.Filesystem;
+      const SH = Cap && Cap.Plugins && Cap.Plugins.Share;
+
+      if (isNative && FS && SH) {
+        try {
+          const w = await FS.writeFile({ path: fn, data: payload, directory: 'CACHE', encoding: 'utf8' });
+          await SH.share({ title: '麻將戰績備份', url: w.uri, dialogTitle: '儲存或傳送備份檔' });
+          return { ok: true };
+        } catch (e) {
+          const m = (e && e.message) ? String(e.message) : String(e);
+          if (/cancel/i.test(m)) return { ok: true, canceled: true };   // 使用者取消分享不是錯誤
+          return { ok: false, error: m };
+        }
+      }
+
+      try {
+        const blob = new Blob([payload], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = fn;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: (e && e.message) ? e.message : String(e) };
+      }
+    }
+
+    // ─── 救援畫面（載入失敗 / React 當機共用）──────────────────────────────
+    const RescueScreen = ({ title, detail }) => {
+      const [msg, setMsg] = useState('');
+      const [busy, setBusy] = useState(false);
+      const rescue = async () => {
+        setBusy(true); setMsg('');
+        try {
+          const d = await window.mahjongStore.load();
+          const r = await shareBackup(d.records, d.players);
+          setMsg(r.ok
+            ? (r.canceled ? '已取消。' : `已匯出 ${d.records.length} 筆紀錄。`)
+            : '匯出失敗：' + r.error);
+        } catch (e) {
+          setMsg('讀取資料失敗：' + ((e && e.message) ? e.message : String(e)));
+        } finally { setBusy(false); }
+      };
+      const S = {
+        wrap: { minHeight: '100vh', background: '#F4EEE1', boxSizing: 'border-box',
+                padding: 'calc(env(safe-area-inset-top, 0px) + 72px) 24px calc(env(safe-area-inset-bottom, 0px) + 48px)' },
+        inner: { maxWidth: 400, margin: '0 auto' },
+        h: { fontSize: 19, fontWeight: 800, color: '#201C18', margin: '0 0 12px' },
+        p: { fontSize: 14.5, lineHeight: 1.75, color: '#4A433C', margin: '0 0 10px' },
+        btn: { display: 'block', width: '100%', boxSizing: 'border-box', padding: '16px',
+               borderRadius: 16, border: 'none', fontSize: 15, fontWeight: 800, cursor: 'pointer' },
+      };
+      return (
+        <div style={S.wrap}>
+          <div style={S.inner}>
+            <p style={S.h}>{title}</p>
+            <p style={S.p}>你的紀錄仍然保存在裝置上，沒有遺失。可以先把資料匯出保管，再試著重新開啟 App。</p>
+            <p style={{ ...S.p, marginBottom: 28 }}><strong>請不要刪除 App</strong>——刪除會連同內部備份一起清除。</p>
+            <button onClick={rescue} disabled={busy}
+              style={{ ...S.btn, background: '#C0392B', color: '#fff', opacity: busy ? 0.6 : 1 }}>
+              {busy ? '處理中…' : '匯出我的資料'}
+            </button>
+            <button onClick={() => window.location.reload()}
+              style={{ ...S.btn, background: 'rgba(32,28,24,0.06)', color: '#201C18', marginTop: 12, padding: '14px' }}>
+              重新載入
+            </button>
+            {msg && <p style={{ ...S.p, fontSize: 12.5, textAlign: 'center', marginTop: 16 }}>{msg}</p>}
+            <p style={{ ...S.p, fontSize: 11.5, marginTop: 32, opacity: 0.8 }}>
+              需要協助請來信 arlong6@gmail.com，附上這段訊息：<br />
+              <span style={{ wordBreak: 'break-all' }}>{detail || '(無)'}</span>
+            </p>
+          </div>
+        </div>
+      );
+    };
+
+    class ErrorBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { err: null }; }
+      static getDerivedStateFromError(err) { return { err }; }
+      componentDidCatch(err) { window.__mahjongLastError = err; }
+      render() {
+        if (!this.state.err) return this.props.children;
+        const e = this.state.err;
+        return <RescueScreen title="麻將戰績遇到問題" detail={(e && e.message) ? e.message : String(e)} />;
+      }
+    }
 
     // ─── Icons ────────────────────────────────────────────────────────────────
     const CalendarIcon = () => (
@@ -142,6 +261,10 @@
     // ─── App ─────────────────────────────────────────────────────────────────
     const App = () => {
       const [loading, setLoading] = useState(true);
+      const [loadError, setLoadError] = useState(null);   // 載入失敗 → 顯示救援畫面
+      const [saveFailed, setSaveFailed] = useState(false); // 寫入失敗 → 顯示常駐警告
+      const [amountError, setAmountError] = useState(''); // 金額驗證訊息（舊版是靜默 return）
+      const [pendingRemovePlayer, setPendingRemovePlayer] = useState(null);
       const [records, setRecords] = useState([]);
       const [players, setPlayers] = useState(['阿明', '小華', '大強', '林小姐']);
 
@@ -194,20 +317,52 @@
 
       useEffect(() => {
         (async () => {
-          const d = await window.mahjongStore.load();
-          setRecords(d.records); setPlayers(d.players);
-          setShowOnboarding(!d.onboarded);   // 用持久化的 onboarded,localStorage 被清也不會重看引導
-          setLoading(false);
+          // 舊版沒有 try/catch 也沒有 finally。load() 一旦 reject（storage.js 內 legacyGet
+          // 對 localStorage 的呼叫可能拋 SecurityError），setLoading(false) 永遠不會執行，
+          // 使用者永久停在「載入中…」轉圈，連救援畫面都看不到。
+          try {
+            const d = await window.mahjongStore.load();
+            setRecords(d.records); setPlayers(d.players);
+            setShowOnboarding(!d.onboarded);   // 用持久化的 onboarded,localStorage 被清也不會重看引導
+          } catch (e) {
+            setLoadError((e && e.message) ? e.message : String(e));
+          } finally {
+            setLoading(false);
+          }
         })();
       }, []);
 
       // 存檔：載入完成後才寫，避免用初始空值覆蓋；debounce 備份
       useEffect(() => {
         if (loading) return;
-        window.mahjongStore.save({ records, players, onboarded: !showOnboarding });
+        let cancelled = false;
+        // 舊版是 fire-and-forget：寫入失敗只會產生一個沒人接的 unhandled rejection，
+        // UI 看起來存好了、磁碟其實沒寫進去。現在 save() 不再 reject，改看回傳值。
+        window.mahjongStore.save({ records, players, onboarded: !showOnboarding })
+          .then(r => { if (!cancelled) setSaveFailed(!(r && r.ok)); })
+          .catch(() => { if (!cancelled) setSaveFailed(true); });
         const t = setTimeout(() => window.mahjongStore.writeBackup({ records, players }), 1500);
-        return () => clearTimeout(t);
+        return () => { cancelled = true; clearTimeout(t); };
       }, [records, players, showOnboarding, loading]);
+
+      // 上面那筆備份是 debounce 1500ms 的。App 在這段時間內被切到背景或被系統收掉，
+      // 這輪備份就沒了。離開前補寫一次。
+      const latestRef = useRef({ records, players });
+      latestRef.current = { records, players };
+      useEffect(() => {
+        if (loading) return;
+        const flush = () => { try { window.mahjongStore.writeBackup(latestRef.current); } catch (_) {} };
+        const onVis = () => { if (document.visibilityState === 'hidden') flush(); };
+        window.addEventListener('pagehide', flush);
+        document.addEventListener('visibilitychange', onVis);
+        return () => {
+          window.removeEventListener('pagehide', flush);
+          document.removeEventListener('visibilitychange', onVis);
+        };
+      }, [loading]);
+
+      // 金額錯誤訊息在使用者重新輸入時就該消失
+      useEffect(() => { if (amountError) setAmountError(''); }, [amount]);
 
       // ─── Computed values ─────────────────────────────────────────────────
       const totalBalance = useMemo(() =>
@@ -298,8 +453,13 @@
       };
 
       const handleSaveRecord = () => {
-        const parsed = parseInt(amount);
-        if (!amount || isNaN(parsed) || parsed <= 0) return;
+        // 舊版：驗證不過直接 return，Modal 不關不動也不提示，看起來像當掉；
+        // 且用 parseInt 會把 "12.5" 靜默截成 12、"1e5" 截成 1。
+        const parsed = Number(String(amount).trim());
+        if (!String(amount).trim() || !Number.isFinite(parsed) || parsed <= 0) {
+          setAmountError('請輸入大於 0 的金額');
+          return;
+        }
         if (editingRecord) {
           setRecords(prev => prev.map(r => r.id === editingRecord.id
             ? { ...r, amount: parsed, type, note, participants: selectedPlayers }
@@ -307,7 +467,7 @@
           ));
         } else {
           setRecords(prev => [...prev, {
-            id: Date.now(), date: selectedDate.toISOString(),
+            id: window.mahjongStore.newId(), date: selectedDate.toISOString(),
             amount: parsed, type, note, participants: selectedPlayers
           }]);
         }
@@ -337,6 +497,18 @@
         }
       };
 
+      // 舊版一個 X 就直接移除、零確認。改成與刪紀錄一致的 two-tap。
+      // 注意：只從名單移除，已寫入紀錄的 participants 不動——那是歷史事實，不該被追溯修改。
+      const removePlayer = (name) => {
+        if (pendingRemovePlayer !== name) {
+          setPendingRemovePlayer(name);
+          setTimeout(() => setPendingRemovePlayer(prev => prev === name ? null : prev), 3000);
+          return;
+        }
+        setPlayers(prev => prev.filter(pl => pl !== name));
+        setPendingRemovePlayer(null);
+      };
+
       const togglePlayerSelection = (name) =>
         setSelectedPlayers(prev => prev.includes(name) ? prev.filter(p => p !== name) : [...prev, name]);
 
@@ -345,26 +517,33 @@
         if (name && !players.includes(name)) { setPlayers(prev => [...prev, name]); setNewPlayerName(''); }
       };
 
-      const exportData = () => {
-        const now = new Date();
-        const fn = `麻將戰績_${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}.json`;
-        const blob = new Blob([JSON.stringify({ records, players }, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = fn; a.click();
-        URL.revokeObjectURL(url);
+      const [exportMsg, setExportMsg] = useState('');
+      const exportData = async () => {
+        setExportMsg('');
+        const r = await shareBackup(records, players);
+        if (!r.ok) setExportMsg('匯出失敗：' + r.error);
+        else if (!r.canceled) setExportMsg(`已匯出 ${records.length} 筆紀錄。`);
       };
 
       const importData = (e) => {
         const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
+          let parsed;
           try {
-            const parsed = JSON.parse(ev.target.result);
-            if (window.confirm(`匯入 ${(parsed.records||[]).length} 筆紀錄？現有資料將被覆蓋。`)) {
-              setRecords(parsed.records || []);
-              setPlayers(parsed.players || []);
-            }
-          } catch { alert('檔案格式錯誤，請選擇正確的備份檔案。'); }
+            parsed = JSON.parse(ev.target.result);
+          } catch {
+            window.alert('檔案格式錯誤，請選擇正確的備份檔案。');
+            return;
+          }
+          // 舊版只擋 JSON.parse。任何合法 JSON（{}、別的 app 的備份、amount 是字串）
+          // 都會直接進 state：輕則總結算靜默算錯，重則 render 期拋錯白屏且已持久化。
+          const v = window.mahjongStore.validateBackup(parsed);
+          if (!v.ok) { window.alert('無法匯入：' + v.error); return; }
+          if (window.confirm(`匯入 ${v.records.length} 筆紀錄？目前的 ${records.length} 筆資料將被覆蓋。`)) {
+            setRecords(v.records);
+            if (v.players.length) setPlayers(v.players);
+          }
         };
         reader.readAsText(file);
         e.target.value = '';
@@ -415,11 +594,21 @@
 
       const maxAbsBalance = Math.max(...statsData.monthlyData.map(m => Math.abs(m.balance)), 1);
 
+      if (loadError) return <RescueScreen title="無法讀取你的戰績" detail={loadError} />;
       if (loading) return (<div className="flex items-center justify-center h-screen text-gray-400">載入中…</div>);
 
       // ─── Render ──────────────────────────────────────────────────────────
       return (
         <div className={`min-h-screen transition-colors duration-700 pb-28 ${isWinningOverall ? 'bg-orange-50/50' : 'bg-slate-100'}`}>
+
+          {/* 存檔失敗警告：這是使用者唯一會知道「剛才那筆可能沒存進去」的管道 */}
+          {saveFailed && (
+            <div className="sticky top-0 z-30 px-5 py-3" style={{ background: 'var(--red)' }}>
+              <p className="text-[12px] font-black text-white leading-relaxed">
+                儲存失敗，最近的變更可能沒有寫入。請立刻到「牌友」頁面匯出備份，並避免刪除 App。
+              </p>
+            </div>
+          )}
 
           {/* Header */}
           <header className={`sticky top-0 z-20 px-6 pt-16 pb-5 border-b transition-all duration-500 ${isWinningOverall ? 'bg-white/80 border-orange-100 backdrop-blur-md' : 'bg-slate-200/80 border-slate-300 backdrop-blur-md'}`}>
@@ -491,7 +680,7 @@
                     </div>
                   ) : (
                     <div style={{ maxHeight: '420px', overflowY: 'auto' }} className="space-y-2.5">
-                      {records.slice().reverse().map(rec => (
+                      {records.slice().sort((x, y) => new Date(y.date) - new Date(x.date)).map(rec => (
                         <div key={rec.id} onClick={() => handleEditRecord(rec)}
                           className="bg-white p-4 rounded-[24px] shadow-sm border border-gray-50 flex justify-between items-center active:bg-gray-50 transition-colors cursor-pointer">
                           <div className="flex items-center gap-3">
@@ -666,8 +855,10 @@
                   <div className="grid grid-cols-2 gap-2.5">
                     {players.map(p => (
                       <div key={p} className="bg-gray-50 p-3 rounded-xl flex justify-between items-center border border-gray-100">
-                        <span className="font-bold text-gray-700 text-sm">{p}</span>
-                        <button onClick={() => setPlayers(prev => prev.filter(pl => pl !== p))} className="text-gray-300 p-1">
+                        <span className="font-bold text-gray-700 text-sm">
+                          {pendingRemovePlayer === p ? '再點一次移除' : p}
+                        </span>
+                        <button onClick={() => removePlayer(p)} className={pendingRemovePlayer === p ? 'text-red-500 p-1' : 'text-gray-300 p-1'}>
                           <div className="w-3 h-3"><XIcon /></div>
                         </button>
                       </div>
@@ -686,6 +877,7 @@
                       匯入備份
                     </button>
                     <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: 'none' }} />
+                    {exportMsg && <p className="text-[11px] text-center pt-1 text-gray-500">{exportMsg}</p>}
                   </div>
                 </div>
               </div>
@@ -768,6 +960,10 @@
                   <input type="text" value={note} onChange={e => setNote(e.target.value)}
                     placeholder="戰報備註（選填）" className="w-full bg-gray-50 border-0 p-4 rounded-xl text-sm" />
 
+                  {amountError && (
+                    <p className="text-xs font-black text-center -mt-1 mb-1" style={{ color: 'var(--red)' }}>{amountError}</p>
+                  )}
+
                   {/* Save */}
                   <button onClick={handleSaveRecord}
                     className={`w-full py-4 rounded-2xl font-black text-lg text-white shadow-lg active:scale-95 transition-all ${type === 'win' ? 'bg-red-500 shadow-red-100' : 'bg-emerald-600 shadow-emerald-100'}`}>
@@ -776,9 +972,9 @@
 
                   {/* Delete (edit mode only) */}
                   {editingRecord && (
-                    <button onClick={() => handleDeleteRecord(editingRecord.id)}
-                      className="w-full py-3 rounded-2xl font-black text-sm text-red-400 bg-red-50 active:scale-95 transition-all">
-                      刪除這筆紀錄
+                    <button onClick={e => handleTwoTapDelete(editingRecord.id, e)}
+                      className={`w-full py-3 rounded-2xl font-black text-sm active:scale-95 transition-all ${pendingDeleteId === editingRecord.id ? 'text-white bg-red-500' : 'text-red-400 bg-red-50'}`}>
+                      {pendingDeleteId === editingRecord.id ? '再點一次確認刪除' : '刪除這筆紀錄'}
                     </button>
                   )}
                 </div>
@@ -889,7 +1085,15 @@
       );
     };
 
-    ReactDOM.render(<App />, document.getElementById('root'));
+    // React 之外拋出的錯誤（事件處理器、非同步）不會被 ErrorBoundary 接到。
+    // 至少記下來，讓使用者回報時能附上。
+    window.addEventListener('error', e => { window.__mahjongLastError = e.error || e.message; });
+    window.addEventListener('unhandledrejection', e => { window.__mahjongLastError = e.reason; });
+
+    ReactDOM.render(
+      <ErrorBoundary><App /></ErrorBoundary>,
+      document.getElementById('root')
+    );
   </script>
 
   <script>

@@ -1,19 +1,28 @@
 {
   "name": "majong_project",
-  "version": "1.0.0",
-  "main": "sw.js",
+  "version": "1.2.2",
+  "main": "www/index.html",
   "scripts": {
-    "test": "node --test www/"
+    "test": "node --test www/*.test.mjs",
+    "sync:web": "cp www/index.html www/storage.js www/sw.js www/manifest.json . && echo '根目錄網頁版(GitHub Pages)已同步自 www/'",
+    "sync": "npm run sync:web && npx cap sync ios",
+    "check": "npm test && npm run sync:web && git diff --quiet -- index.html storage.js sw.js manifest.json && echo '根目錄與 www/ 一致' || (echo '根目錄與 www/ 不同步,已自動更新,請 commit' && exit 1)"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@capacitor/cli": "^7.6.0",
     "@capacitor/core": "^8.2.0",
     "@capacitor/filesystem": "^8.1.2",
     "@capacitor/ios": "^8.2.0",
-    "@capacitor/preferences": "^8.0.1"
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/share": "^8.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

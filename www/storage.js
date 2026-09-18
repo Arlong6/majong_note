@@ -8,6 +8,63 @@
   function createStorage(a) {
     const parse = (s, fb) => { try { return s ? JSON.parse(s) : fb; } catch { return fb; } };
 
+    // 1.2.2-A2：legacyGet 是 load() 裡唯一沒有防護的外部呼叫。
+    // localStorage 在 WKWebView 儲存被系統回收、無痕模式、企業描述檔限制下會直接 throw
+    // SecurityError/QuotaError，一旦拋出就讓整個 load() reject，呼叫端的 setLoading(false)
+    // 永遠不會執行 → 使用者卡在「載入中…」永久轉圈，而且後面第 3 層 backup 救援也跑不到。
+    // 這裡一律吞掉例外當作「這個來源沒資料」，語意與 readPref 的防護一致。
+    const legacyGet = (k) => { try { return a.legacyGet(k); } catch (_) { return null; } };
+
+    const newId = () => {
+      try { if (globalThis.crypto && globalThis.crypto.randomUUID) return globalThis.crypto.randomUUID(); } catch (_) {}
+      return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    };
+
+    // 1.2.2-A3：匯入來源是使用者自選的任意檔案。舊版只 catch JSON.parse，
+    // 任何「合法 JSON 但結構不對」的檔案（{}、別的 app 的備份、amount 是字串）
+    // 都會直接進 state：輕則總結算靜默算錯，重則 render 期拋錯白屏且已持久化。
+    // 這裡做嚴格驗證 + 正規化，任何一筆不合法就整份拒絕（不做部分匯入，避免使用者
+    // 以為匯入成功卻缺資料）。
+    function validateBackup(obj) {
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, error: '這個檔案不是麻將戰績的備份檔。' };
+      if (!Array.isArray(obj.records)) return { ok: false, error: '備份檔裡找不到紀錄資料。' };
+
+      const seen = new Set();
+      const records = [];
+      for (let i = 0; i < obj.records.length; i++) {
+        const r = obj.records[i];
+        const at = '第 ' + (i + 1) + ' 筆紀錄';
+        if (!r || typeof r !== 'object' || Array.isArray(r)) return { ok: false, error: at + '格式無法辨識。' };
+
+        const amount = typeof r.amount === 'number' ? r.amount : Number(r.amount);
+        if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: at + '的金額無效。' };
+
+        const t = r.date == null ? NaN : new Date(r.date).getTime();
+        if (!Number.isFinite(t)) return { ok: false, error: at + '的日期無效。' };
+
+        if (r.type !== 'win' && r.type !== 'loss') return { ok: false, error: at + '的輸贏欄位無效。' };
+
+        let id = r.id;
+        if (id == null || seen.has(id)) id = newId();
+        seen.add(id);
+
+        records.push({
+          id: id,
+          date: new Date(t).toISOString(),
+          amount: amount,
+          type: r.type,
+          note: typeof r.note === 'string' ? r.note : '',
+          participants: Array.isArray(r.participants) ? r.participants.filter(p => typeof p === 'string') : [],
+        });
+      }
+
+      const players = Array.isArray(obj.players)
+        ? obj.players.filter(p => typeof p === 'string' && p.trim() !== '')
+        : [];
+
+      return { ok: true, records: records, players: players };
+    }
+
     async function readPref() {
       // Critical#2：任何讀取例外（原生 Preferences API 拋錯、JSON 損毀等）都視為「這個來源沒資料」，
       // 絕不讓例外往外拋，否則 load() 會整個 reject，等於用戶開 app 直接白屏兼資料遺失。
@@ -49,11 +106,11 @@
       if (pref) return { ...pref, source: 'pref' };
 
       // 2) pref 沒資料 → 看 legacy localStorage（即使先前已標記 migrated，也重跑一次冪等遷移救援）
-      const legacyRec = parse(a.legacyGet(K.rec), null);
+      const legacyRec = parse(legacyGet(K.rec), null);
       if (legacyRec !== null) {
-        const players = parse(a.legacyGet(K.ply), DEFAULT_PLAYERS);
+        const players = parse(legacyGet(K.ply), DEFAULT_PLAYERS);
         // 舊 app 存的是 '1'(見原 finishOnboarding),新 app 存 'true'——兩者都當已完成引導,避免遷移用戶重看引導
-        const legacyOnb = a.legacyGet(K.onb);
+        const legacyOnb = legacyGet(K.onb);
         const onboarded = legacyOnb === 'true' || legacyOnb === '1';
         try {
           // 防線#1：遷移前先備份原始 localStorage
@@ -103,9 +160,23 @@
           }
         } catch (_) { /* 備份失敗不阻擋寫入 */ }
       }
-      await a.prefSet(K.rec, JSON.stringify(records));
-      await a.prefSet(K.ply, JSON.stringify(players));
-      await a.prefSet(K.onb, String(!!d.onboarded));
+      // 1.2.2-A1：舊版三個 prefSet 直接 await 且無 try/catch。呼叫端是 fire-and-forget，
+      // 任何一個失敗（裝置空間不足、plist 損毀）都只會產生一個沒人接的 unhandled rejection：
+      // UI 上紀錄已新增、磁碟卻沒寫進去，使用者下次開 app 才發現不見了，全程無任何提示。
+      // 現在：每個欄位獨立 try/catch（主鍵失敗不阻止次鍵寫入），永不 reject，
+      // 改以回傳值回報，讓呼叫端能顯示錯誤。
+      const failed = [];
+      try { await a.prefSet(K.rec, JSON.stringify(records)); } catch (_) { failed.push('records'); }
+      try { await a.prefSet(K.ply, JSON.stringify(players)); } catch (_) { failed.push('players'); }
+      try { await a.prefSet(K.onb, String(!!d.onboarded)); } catch (_) { failed.push('onboarded'); }
+
+      // 主鍵寫不進去是最危險的情況：立刻把這份資料寫成檔案備份，
+      // 讓資料至少存在於第二個物理位置，之後還能救回來。
+      if (failed.includes('records')) {
+        await writeBackup({ records: records, players: players });
+      }
+
+      return { ok: failed.length === 0, failed: failed };
     }
 
     async function writeBackup(d) {
@@ -121,7 +192,7 @@
         }
       } catch (_) { /* 備份失敗不影響主流程 */ }
     }
-    return { load, save, writeBackup, _K: K };
+    return { load, save, writeBackup, validateBackup, newId, _K: K };
   }
 
   function browserAdapter() {

@@ -25,6 +25,14 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
     input, textarea { -webkit-user-select: text; user-select: text; }
+    /* safe area：viewport-fit=cover 讓 webview 佔滿整個螢幕，所有貼邊的間距都必須跟著
+       機型的 inset 走。舊版全用寫死的 px：底部 pb-8(32px) 小於 home indicator 的 34pt，
+       導覽列被壓住；頂部 pt-16(64px) 在 Dynamic Island 機型只剩 5px 餘裕，在 SE 又白白
+       浪費 44px。用 !important 是因為 Tailwind runtime 產生的 utility 會注入在這段之後。 */
+    .safe-top { padding-top: calc(env(safe-area-inset-top, 20px) + 20px) !important; }
+    .safe-bottom-nav { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important; }
+    .safe-bottom-sheet { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 28px) !important; }
+    .safe-page { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 96px) !important; }
     @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
     .animate-slide-up { animation: slide-up 0.3s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -101,8 +109,10 @@
     // 改成：原生環境寫進暫存檔後開系統分享（可存到「檔案」App 或傳給自己），
     // 非原生環境才退回瀏覽器下載。
     async function shareBackup(records, players) {
+      // 摘要欄位放最前面，使用者打開檔案第一眼看到的是中文說明而不是英文欄位
+      const summary = window.mahjongStore.backupSummary(records || []);
       const payload = JSON.stringify(
-        { version: 1, exportedAt: new Date().toISOString(), records: records || [], players: players || [] },
+        { ...summary, version: 1, exportedAt: new Date().toISOString(), records: records || [], players: players || [] },
         null, 2
       );
       const fn = backupFileName();
@@ -259,10 +269,37 @@
     );
 
     // ─── App ─────────────────────────────────────────────────────────────────
+    // storage.load() 回報的 source 代表這份資料實際上是從哪一層撈回來的。
+    // 這些狀態都意味著「主要儲存已經不可靠」，必須讓使用者知道並立刻匯出，
+    // 而不是給他一個看起來很正常的畫面。
+    const dataNoticeFor = (d) => {
+      if (d.source === 'recovered') {
+        let msg = d.persisted === false
+          ? '已從備份還原你的紀錄，但無法寫回裝置儲存。請立刻到「牌友」頁面匯出備份。'
+          : '偵測到主要儲存異常，已自動從備份還原你的紀錄。建議到「牌友」頁面匯出一份保存。';
+        // 還原到的不是最完整的那份時必須說清楚，否則使用者會以為資料已經全回來了
+        if (d.hasLargerBackup) {
+          msg += `另有一份備份含 ${d.largestCount} 筆紀錄，可到「牌友」→「從自動備份還原」查看。`;
+        }
+        if (d.skippedRecords) {
+          msg += `其中 ${d.skippedRecords} 筆資料已損毀，無法還原。`;
+        }
+        return msg;
+      }
+      if (d.source === 'legacy-fallback') {
+        return '資料目前只存在舊版儲存區，搬移沒有完成。請到「牌友」頁面匯出備份，避免系統清理時遺失。';
+      }
+      if (d.source === 'empty' && d.suspicious) {
+        return '偵測到備份檔存在但讀不出來。請先不要新增紀錄，到「牌友」頁面確認資料狀況。';
+      }
+      return null;
+    };
+
     const App = () => {
       const [loading, setLoading] = useState(true);
       const [loadError, setLoadError] = useState(null);   // 載入失敗 → 顯示救援畫面
-      const [saveFailed, setSaveFailed] = useState(false); // 寫入失敗 → 顯示常駐警告
+      const [saveState, setSaveState] = useState(null);    // 寫入失敗的細節 → 顯示常駐警告
+      const [dataNotice, setDataNotice] = useState(null);  // 資料來源異常（救援/遷移回退）→ 顯示常駐提示
       const [amountError, setAmountError] = useState(''); // 金額驗證訊息（舊版是靜默 return）
       const [pendingRemovePlayer, setPendingRemovePlayer] = useState(null);
       const [records, setRecords] = useState([]);
@@ -324,6 +361,11 @@
             const d = await window.mahjongStore.load();
             setRecords(d.records); setPlayers(d.players);
             setShowOnboarding(!d.onboarded);   // 用持久化的 onboarded,localStorage 被清也不會重看引導
+            // load() 的 source 是「這份資料從哪裡來」的診斷訊號。舊版整個丟掉，於是
+            // 「主儲存已經壞了、現在跑的是備份還原的資料」——最該叫使用者立刻匯出的時刻——
+            // UI 一聲不吭。
+            setDataNotice(dataNoticeFor(d));
+            setLastExportAt(d.lastExportAt || null);
           } catch (e) {
             setLoadError((e && e.message) ? e.message : String(e));
           } finally {
@@ -334,13 +376,18 @@
 
       // 存檔：載入完成後才寫，避免用初始空值覆蓋；debounce 備份
       useEffect(() => {
-        if (loading) return;
+        // loadError 的守衛和 loading 一樣重要：load() 一旦失敗，catch 設 loadError、
+        // finally 設 loading=false，這個 effect 就會立刻拿「從未被 load 覆寫的初始值 []」
+        // 呼叫 save()，把儲存寫成空，1.5 秒後再把備份也蓋掉。
+        // 畫面上 RescueScreen 正在跟使用者說「你的紀錄仍然保存在裝置上」，背景卻在刪。
+        // 注意 line 596 的提早 return 不會阻止 effect 執行，不能當作保護。
+        if (loading || loadError) return;
         let cancelled = false;
         // 舊版是 fire-and-forget：寫入失敗只會產生一個沒人接的 unhandled rejection，
         // UI 看起來存好了、磁碟其實沒寫進去。現在 save() 不再 reject，改看回傳值。
         window.mahjongStore.save({ records, players, onboarded: !showOnboarding })
-          .then(r => { if (!cancelled) setSaveFailed(!(r && r.ok)); })
-          .catch(() => { if (!cancelled) setSaveFailed(true); });
+          .then(r => { if (!cancelled) setSaveState(r && r.ok ? null : (r || { ok: false })); })
+          .catch(() => { if (!cancelled) setSaveState({ ok: false }); });
         const t = setTimeout(() => window.mahjongStore.writeBackup({ records, players }), 1500);
         return () => { cancelled = true; clearTimeout(t); };
       }, [records, players, showOnboarding, loading]);
@@ -350,7 +397,7 @@
       const latestRef = useRef({ records, players });
       latestRef.current = { records, players };
       useEffect(() => {
-        if (loading) return;
+        if (loading || loadError) return;   // 同上：載入失敗時這裡會再補一刀
         const flush = () => { try { window.mahjongStore.writeBackup(latestRef.current); } catch (_) {} };
         const onVis = () => { if (document.visibilityState === 'hidden') flush(); };
         window.addEventListener('pagehide', flush);
@@ -442,6 +489,9 @@
       };
 
       const handleEditRecord = (rec) => {
+        // 在日詳情按過垃圾桶（two-tap 已武裝）再改點鉛筆進編輯，舊版沒有清掉 pendingDeleteId，
+        // 編輯 Modal 的刪除鈕會直接是「再點一次確認刪除」狀態——一下就刪掉，保護等於失效。
+        setPendingDeleteId(null);
         setEditingRecord(rec);
         setSelectedDate(new Date(rec.date));
         setAmount(String(rec.amount));
@@ -518,11 +568,72 @@
       };
 
       const [exportMsg, setExportMsg] = useState('');
+      const [restoreList, setRestoreList] = useState(null);   // null = 未開啟
+      const [restoreMsg, setRestoreMsg] = useState('');
+      const [lastExportAt, setLastExportAt] = useState(null);
       const exportData = async () => {
         setExportMsg('');
         const r = await shareBackup(records, players);
-        if (!r.ok) setExportMsg('匯出失敗：' + r.error);
-        else if (!r.canceled) setExportMsg(`已匯出 ${records.length} 筆紀錄。`);
+        if (!r.ok) { setExportMsg('匯出失敗：' + r.error); return; }
+        if (r.canceled) return;
+        setExportMsg(`已匯出 ${records.length} 筆紀錄。`);
+        // 手動匯出是唯一能讓資料離開這支手機的一層，記下時間讓使用者看得到自己多久沒備份
+        try {
+          const m = await window.mahjongStore.markExported();
+          setLastExportAt(m.at);
+        } catch (_) {}
+      };
+
+      const formatLastExport = (iso) => {
+        if (!iso) return '還沒有匯出過。匯出的備份檔不會隨 App 一起被刪掉。';
+        const d = new Date(iso);
+        if (!Number.isFinite(d.getTime())) return '還沒有匯出過。';
+        const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+        const when = `${d.getMonth() + 1}/${d.getDate()}`;
+        if (days <= 0) return `上次匯出：${when}（今天）`;
+        if (days === 1) return `上次匯出：${when}（昨天）`;
+        return `上次匯出：${when}（${days} 天前）`;
+      };
+
+      // 自動救援只在主儲存整個讀不出來時才會跑。誤刪的情況主儲存是好的，
+      // 所以備份需要一個使用者自己拿得到的出口。
+      const openRestore = async () => {
+        setRestoreMsg('');
+        try {
+          setRestoreList(await window.mahjongStore.listBackups());
+        } catch (_) {
+          setRestoreList([]);
+        }
+      };
+
+      const BACKUP_KIND_LABEL = {
+        latest: '最新自動備份', daily: '每日快照',
+        safety: '大量刪除前的保險檔', 'pre-migration': '舊版搬移前',
+      };
+
+      const formatBackupTime = (iso) => {
+        if (!iso) return '時間不明';
+        const d = new Date(iso);
+        if (!Number.isFinite(d.getTime())) return '時間不明';
+        const p2 = (n) => String(n).padStart(2, '0');
+        return `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+      };
+
+      const doRestore = async (b) => {
+        const r = await window.mahjongStore.readBackup(b.name);
+        if (!r.ok) { setRestoreMsg(r.error); return; }
+        if (!window.confirm(`還原這份 ${r.records.length} 筆的備份？目前的 ${records.length} 筆會被取代。`)) return;
+        // 取代前先把現況留成保險檔，選錯備份也能再換一份回來。
+        // snapshot() 永不 reject，失敗只會回 ok:false——忽略它等於在沒有退路的情況下覆蓋資料。
+        let snap = { ok: false, skipped: 'unknown' };
+        try { snap = await window.mahjongStore.snapshot({ records, players }); } catch (_) {}
+        if (!snap.ok && snap.skipped !== 'duplicate') {
+          if (!window.confirm('無法建立還原點，萬一選錯這份備份就換不回來了。仍要繼續嗎？')) return;
+        }
+        setRecords(r.records);
+        if (r.players.length) setPlayers(r.players);
+        setRestoreList(null);
+        setRestoreMsg(`已還原 ${r.records.length} 筆紀錄。`);
       };
 
       const importData = (e) => {
@@ -541,8 +652,17 @@
           const v = window.mahjongStore.validateBackup(parsed);
           if (!v.ok) { window.alert('無法匯入：' + v.error); return; }
           if (window.confirm(`匯入 ${v.records.length} 筆紀錄？目前的 ${records.length} 筆資料將被覆蓋。`)) {
-            setRecords(v.records);
-            if (v.players.length) setPlayers(v.players);
+            // 匯入和還原一樣是整批取代，同樣要先留退路。舊版完全沒有——選到上個月的舊備份
+            // 覆蓋掉現在的資料，而且落差不到一半時連大幅刪除防護都不會觸發。
+            (async () => {
+              let snap = { ok: false, skipped: 'unknown' };
+              try { snap = await window.mahjongStore.snapshot({ records, players }); } catch (_) {}
+              if (!snap.ok && snap.skipped !== 'duplicate') {
+                if (!window.confirm('無法建立還原點，萬一匯入的不是你要的那份就換不回來了。仍要繼續嗎？')) return;
+              }
+              setRecords(v.records);
+              if (v.players.length) setPlayers(v.players);
+            })();
           }
         };
         reader.readAsText(file);
@@ -599,19 +719,34 @@
 
       // ─── Render ──────────────────────────────────────────────────────────
       return (
-        <div className={`min-h-screen transition-colors duration-700 pb-28 ${isWinningOverall ? 'bg-orange-50/50' : 'bg-slate-100'}`}>
+        <div className={`min-h-screen transition-colors duration-700 safe-page ${isWinningOverall ? 'bg-orange-50/50' : 'bg-slate-100'}`}>
 
-          {/* 存檔失敗警告：這是使用者唯一會知道「剛才那筆可能沒存進去」的管道 */}
-          {saveFailed && (
-            <div className="sticky top-0 z-30 px-5 py-3" style={{ background: 'var(--red)' }}>
-              <p className="text-[12px] font-black text-white leading-relaxed">
-                儲存失敗，最近的變更可能沒有寫入。請立刻到「牌友」頁面匯出備份，並避免刪除 App。
-              </p>
-            </div>
-          )}
+          {/* 警告列與 header 舊版各自 sticky top-0，一捲動就疊在同一個位置：banner 的 z-30 比較高，
+              會整個蓋掉標題與總結算，看起來像壞掉。改成同一個 sticky 容器依序排列。 */}
+          <div className={`sticky top-0 z-30 safe-top border-b transition-all duration-500 ${isWinningOverall ? 'bg-white/80 border-orange-100 backdrop-blur-md' : 'bg-slate-200/80 border-slate-300 backdrop-blur-md'}`}>
 
-          {/* Header */}
-          <header className={`sticky top-0 z-20 px-6 pt-16 pb-5 border-b transition-all duration-500 ${isWinningOverall ? 'bg-white/80 border-orange-100 backdrop-blur-md' : 'bg-slate-200/80 border-slate-300 backdrop-blur-md'}`}>
+            {/* 存檔失敗警告：這是使用者唯一會知道「剛才那筆可能沒存進去」的管道。
+                儲存層沒回應、以及連緊急備份都沒寫成，這兩種情況比單純寫入失敗更嚴重，要講得更重。 */}
+            {saveState && (
+              <div className="px-5 py-3 mb-2" style={{ background: 'var(--red)' }}>
+                <p className="text-[12px] font-black text-white leading-relaxed">
+                  {saveState.timedOut
+                    ? '儲存沒有回應，最近的變更可能沒有寫入。請立刻到「牌友」頁面匯出備份，並且先不要關閉 App。'
+                    : saveState.backupOk === false
+                      ? '儲存失敗，緊急備份也沒有成功。你的資料目前只存在畫面上，請立刻到「牌友」頁面匯出備份，不要關閉 App。'
+                      : '儲存失敗，最近的變更可能沒有寫入。請立刻到「牌友」頁面匯出備份，並避免刪除 App。'}
+                </p>
+              </div>
+            )}
+
+            {/* 資料來源異常：從備份救回、遷移沒完成、或備份檔讀不出來 */}
+            {dataNotice && (
+              <div className="px-5 py-3 mb-2" style={{ background: 'var(--ink)' }}>
+                <p className="text-[12px] font-black text-white leading-relaxed">{dataNotice}</p>
+              </div>
+            )}
+
+            <header className="px-6 pb-5">
             <div className="flex items-center justify-between mb-6">
               <h1 className="text-xl font-black tracking-[0.08em]" style={{ color: 'var(--ink)' }}>麻將戰績</h1>
               <span className="text-[11px] font-bold text-gray-500 tracking-[0.1em]">
@@ -629,6 +764,7 @@
               <div className={`seal ${isWinningOverall ? '' : 'lose'}`}>{isWinningOverall ? '紅中' : '白板'}</div>
             </div>
           </header>
+          </div>
 
           <main className="max-w-md mx-auto p-4 space-y-5">
 
@@ -868,7 +1004,10 @@
 
                 <div className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-100">
                   <h3 className="font-black text-xl text-gray-800 mb-1">資料備份</h3>
-                  <p className="text-[11px] text-gray-400 mb-5">匯出或匯入戰績備份檔案</p>
+                  <p className="text-[11px] text-gray-400 mb-1">匯出或匯入戰績備份檔案</p>
+                  <p className="text-[11px] mb-5" style={{ color: lastExportAt ? '#9A9284' : 'var(--red)' }}>
+                    {formatLastExport(lastExportAt)}
+                  </p>
                   <div className="space-y-3">
                     <button onClick={exportData} className="w-full py-3.5 rounded-2xl font-black text-sm text-white bg-blue-600 active:scale-95 transition-all">
                       匯出備份
@@ -877,7 +1016,11 @@
                       匯入備份
                     </button>
                     <input ref={importRef} type="file" accept=".json" onChange={importData} style={{ display: 'none' }} />
+                    <button onClick={openRestore} className="w-full py-3.5 rounded-2xl font-black text-sm text-gray-600 bg-gray-100 active:scale-95 transition-all">
+                      從自動備份還原
+                    </button>
                     {exportMsg && <p className="text-[11px] text-center pt-1 text-gray-500">{exportMsg}</p>}
+                    {restoreMsg && <p className="text-[11px] text-center pt-1 text-gray-500">{restoreMsg}</p>}
                   </div>
                 </div>
               </div>
@@ -885,7 +1028,7 @@
           </main>
 
           {/* ── Bottom Nav (4 items) ─────────────────────────────────── */}
-          <nav className={`fixed bottom-0 left-0 right-0 border-t flex items-center pb-8 pt-3 backdrop-blur-2xl ${isWinningOverall ? 'bg-white/90 border-orange-100' : 'bg-slate-50/90 border-slate-300'}`}>
+          <nav className={`fixed bottom-0 left-0 right-0 border-t flex items-center pt-3 safe-bottom-nav backdrop-blur-2xl ${isWinningOverall ? 'bg-white/90 border-orange-100' : 'bg-slate-50/90 border-slate-300'}`}>
             <button onClick={() => setActiveTab('calendar')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'calendar' ? 'text-blue-600' : 'text-gray-300'}`}>
               <div className="w-6 h-6"><CalendarIcon /></div>
               <span className="text-[9px] font-black tracking-widest">戰績</span>
@@ -906,10 +1049,40 @@
             </button>
           </nav>
 
+          {/* ── 從自動備份還原 ───────────────────────────────────────── */}
+          {restoreList && (
+            <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm" onClick={() => setRestoreList(null)}>
+              <div className="bg-white w-full max-w-md rounded-t-[40px] p-6 safe-bottom-sheet animate-slide-up shadow-2xl overflow-y-auto max-h-[80vh]" onClick={e => e.stopPropagation()}>
+                <h3 className="font-black text-xl text-gray-800 mb-1">從自動備份還原</h3>
+                <p className="text-[11px] text-gray-400 mb-5">App 會自動留存備份。偵測到大量刪除時會另外留一份不被覆蓋的保險檔。</p>
+                {restoreList.length === 0 ? (
+                  <p className="text-sm text-gray-500 py-8 text-center">目前沒有可用的自動備份。</p>
+                ) : (
+                  <div className="space-y-2.5">
+                    {restoreList.map(b => (
+                      <button key={b.name} onClick={() => doRestore(b)}
+                        className="w-full text-left bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 active:scale-95 transition-all">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="font-black text-sm text-gray-700">{b.count} 筆紀錄</span>
+                          <span className="text-[11px] text-gray-500">{formatBackupTime(b.exportedAt)}</span>
+                        </div>
+                        <span className="text-[10px] text-gray-400">{BACKUP_KIND_LABEL[b.kind] || b.kind}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {restoreMsg && <p className="text-[11px] text-center pt-4 text-gray-500">{restoreMsg}</p>}
+                <button onClick={() => setRestoreList(null)} className="w-full mt-5 py-3 rounded-2xl font-black text-sm text-gray-600 bg-gray-100 active:scale-95 transition-all">
+                  關閉
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ── Add / Edit Modal ─────────────────────────────────────── */}
           {isAddModalOpen && (
             <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm">
-              <div className="bg-white w-full max-w-md rounded-t-[40px] p-8 pb-12 animate-slide-up shadow-2xl overflow-y-auto max-h-[90vh]">
+              <div className="bg-white w-full max-w-md rounded-t-[40px] p-8 safe-bottom-sheet animate-slide-up shadow-2xl overflow-y-auto max-h-[90vh]">
                 <div className="flex justify-between items-center mb-6">
                   <div>
                     <h2 className="text-xl font-black text-gray-800">
@@ -986,7 +1159,7 @@
           {dayDetailDate && (
             <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm"
               onClick={() => { setDayDetailDate(null); setPendingDeleteId(null); }}>
-              <div className="bg-white w-full max-w-md rounded-t-[40px] p-6 pb-12 animate-slide-up shadow-2xl overflow-y-auto max-h-[80vh]"
+              <div className="bg-white w-full max-w-md rounded-t-[40px] p-6 safe-bottom-sheet animate-slide-up shadow-2xl overflow-y-auto max-h-[80vh]"
                 onClick={e => e.stopPropagation()}>
                 <div className="flex justify-between items-center mb-5">
                   <h2 className="text-xl font-black text-gray-800">
@@ -1097,7 +1270,11 @@
   </script>
 
   <script>
-    if ('serviceWorker' in navigator) {
+    // sw.js 是 cache-first 且 CACHE_NAME 固定，命中就永遠回舊檔。在 Capacitor 的
+    // capacitor://localhost 自訂 scheme 下 WKWebView 不支援 Service Worker，註冊本來就會
+    // 失敗並被 catch 吞掉——但與其依賴那個假設，不如直接不註冊，徹底排除
+    // 「App 被舊 bundle 鎖住、更新推不出去」的風險。網頁版不受影響。
+    if ('serviceWorker' in navigator && !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())) {
       window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => {}); });
     }
   </script>

@@ -4,26 +4,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createStorage } = require('../www/storage.js');
 
-// 記憶體 fake adapter，模擬 Preferences / Filesystem / localStorage
-export function makeAdapter(seed = {}) {
-  const pref = new Map(Object.entries(seed.pref || {}));
-  const files = new Map(Object.entries(seed.files || {}));
-  const legacy = new Map(Object.entries(seed.legacy || {}));
-  return {
-    _pref: pref, _files: files, _legacy: legacy,
-    failPrefSetOn: seed.failPrefSetOn || null,
-    failLegacyGetOn: seed.failLegacyGetOn || null,
-    async prefGet(k) { return pref.has(k) ? pref.get(k) : null; },
-    async prefSet(k, v) { if (this.failPrefSetOn === k) throw new Error('simulated pref fail'); pref.set(k, v); },
-    legacyGet(k) { if (this.failLegacyGetOn === k || this.failLegacyGetOn === '*') throw new Error('simulated legacyGet fail'); return legacy.has(k) ? legacy.get(k) : null; },
-    async fileWrite(n, d) { files.set(n, d); },
-    async fileRead(n) { return files.has(n) ? files.get(n) : null; },
-    async fileList() { return [...files.keys()]; },
-    async fileDelete(n) { files.delete(n); },
-    today() { return seed.today || '2026-07-07'; },
-    now() { return (seed.today || '2026-07-07') + 'T00:00:00Z'; },
-  };
-}
+import { makeAdapter } from './adapter.mjs';
 
 test('createStorage 回傳 load/save/writeBackup', () => {
   const s = createStorage(makeAdapter());
@@ -34,7 +15,12 @@ test('createStorage 回傳 load/save/writeBackup', () => {
 
 const K = createStorage(makeAdapter())._K;
 const DEFAULT_PLAYERS = ['阿明', '小華', '大強', '林小姐'];
-const R = [{ id: 1, amount: 100 }, { id: 2, amount: -50 }];
+// 真實紀錄的樣子：App 產生的每一筆都有 date/type/正數金額。
+// 舊的簡化假資料（缺 date/type、金額是負的）測不到走驗證的救援路徑。
+const R = [
+  { id: 1, date: '2026-09-01T12:00:00.000Z', amount: 100, type: 'win', note: '', participants: [] },
+  { id: 2, date: '2026-09-02T12:00:00.000Z', amount: 50, type: 'loss', note: '', participants: [] },
+];
 
 test('全新用戶：空 → 回預設空狀態，不報錯', async () => {
   const s = createStorage(makeAdapter());

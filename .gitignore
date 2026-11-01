@@ -6,3 +6,20 @@ ios/App/build/
 ios/App/DerivedData/
 *.DS_Store
 .superpowers/
+
+# 密鑰與簽章檔（fastlane cert/sigh 會把 .p12、.certSigningRequest 寫進執行目錄）
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.cer
+*.mobileprovision
+*.certSigningRequest
+*service-account*.json
+*-adminsdk-*.json
+
+# fastlane 產物
+fastlane/report.xml
+*.ipa
+*.dSYM.zip
